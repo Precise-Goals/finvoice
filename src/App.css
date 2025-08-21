@@ -45,12 +45,14 @@ li.navbar-item.navbar-agent {
 }
 li.navbar-agent-link {
   position: fixed;
-  bottom: 4%;
-  left: 41%;
-  font-size: 43px;
+  position: fixed;
+  bottom: 5.5%;
+  left: 50%;
+  font-size: 40px;
   background: black;
   color: white;
-  padding: 2% 4%;
+  transform: translateX(-50%);
+  padding: 1% 4%;
   border-radius: 5rem;
 }
 img.man {
