@@ -11,7 +11,9 @@
 
 ---
 
-## ✨ Our Solution: FinVoice\nFinVoice bridges these gaps by making financial management as simple as speaking.**Demo Flow**: Speech 🗣️ → Text Conversion 📝 → Expense Logged 💸 → Dashboard Updates 📊 → AI Suggestions 
+## ✨ Our Solution: FinVoice
+FinVoice bridges these gaps by making financial management as simple as speaking.
+**Demo Flow**: Speech 🗣️ → Text Conversion 📝 → Expense Logged 💸 → Dashboard Updates 📊 → AI Suggestions 
 
 ---
 
