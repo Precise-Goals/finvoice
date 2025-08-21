@@ -10,6 +10,11 @@
 a {
   color: black;
 }
+:focus-visible,
+:focus,
+:focus-within {
+  outline: none;
+}
 nav.navbar {
   width: 100%;
 }
