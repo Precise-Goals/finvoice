@@ -38,7 +38,7 @@ const LogUp = () => {
 
   return (
     <div className="logup-container">
-      <h2 className="logup-title">{isLogin ? "Login" : "Sign Up"}</h2>
+      <h2 className="logup-title">{isLogin ? "LOGIN" : "SIGN UP"}</h2>
       <form className="logup-form" onSubmit={handleSubmit}>
         <input
           className="logup-input"
@@ -70,9 +70,8 @@ const LogUp = () => {
             setSuccess("");
           }}
         >
-          {isLogin
-            ? "Don't have an account? Sign Up"
-            : "Already have an account? Login"}
+          {isLogin ? "Don't have an account?" : "Already have an account?"}
+          <br /><span>{isLogin ? " Sign Up" : " Login"}</span>
         </button>
       </div>
       {error && <div className="logup-error">{error}</div>}

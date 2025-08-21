@@ -17,6 +17,7 @@ import { UserContext, useUser } from "./UserContext";
 import LogUp from "./Containers/LogUp";
 import Navbar from "./Components/Navbar";
 import IntroAnimation from "./Components/IntroAnimation";
+import Usar from "./Components/usar";
 
 function UserProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -47,11 +48,7 @@ function UserProvider({ children }) {
 
   const value = { user, loading, signOut: () => signOut(getAuth(app)) };
 
-  return (
-    <UserContext.Provider value={value}>
-      {children}
-    </UserContext.Provider>
-  );
+  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
 }
 
 // --- Private Route Wrapper ---
@@ -107,6 +104,9 @@ function App() {
           <div className="wrapper">
             <UserProvider>
               <BrowserRouter>
+                <Usar />
+                <div className="divsa"></div>
+
                 <Navbar />
                 <Routes>
                   {routeData.map((route, index) =>

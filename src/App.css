@@ -3,6 +3,9 @@
   padding: 0;
   text-decoration: none;
   box-sizing: border-box;
+  font-family: "Poppins", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  scroll-behavior: smooth;
 }
 a {
   color: black;
@@ -47,6 +50,162 @@ li.navbar-agent-link {
   font-size: 43px;
   background: black;
   color: white;
-  padding: 3% 4%;
+  padding: 2% 4%;
   border-radius: 5rem;
+}
+img.man {
+  width: 75%;
+  border-radius: 34rem;
+}
+
+.Home {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+.divsa {
+  width: 100%;
+  height: 8rem;
+  border-radius: 0 0 6rem 6rem;
+  background: #000000;
+}
+
+.iscosa {
+  background: white;
+  color: black;
+  position: absolute;
+  padding: 0.35em 0.35em;
+  font-size: 28px;
+  display: flex;
+  top: 4%;
+  border-radius: 4rem;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  left: 76%;
+}
+.conten {
+  text-align: center;
+  margin: 6% 0%;
+  padding: 1% 10%;
+  display: flex;
+  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 1em;
+}
+
+.conten button {
+  border: 1px solid black;
+  background: black;
+  padding: 5% 8%;
+  color: white;
+  font-size: 23px;
+  border-radius: 5rem;
+}
+
+.conten h1 {
+  font-size: 30px;
+  font-family: revert;
+  font-weight: bolder;
+}
+h2.logup-title {
+  font-size: 72px;
+  font-weight: 900;
+  background: url(data:image/jpeg;base64,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);
+  background-clip: text;
+  color: transparent;
+  filter: hue-rotate(45deg);
+  background-position-x: -50%;
+  background-position-y: -9%;
+}
+
+.logup-container {
+  padding: 10% 7%;
+}
+form.logup-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1em;
+  width: 100%;
+}
+
+input.logup-input {
+  font-size: 20px;
+  padding: 2% 6%;
+  width: 100%;
+  border: none;
+  display: flex;
+  border-bottom: 1px solid black;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+form.logup-form button {
+  font-size: 21px;
+  padding: 4% 7%;
+  border-radius: 4rem;
+  border: 1px solid black;
+  background: black;
+  color: white;
+}
+
+.logup-toggle button {
+  background: white;
+  border: none;
+  font-size: 19px;
+  padding: 6%;
+  text-align: center;
+}
+
+h2.logup-title {
+  line-height: 100%;
+}
+
+h2.logup-title::after {
+  content: "";
+  display: block;
+  background: black;
+  width: 41%;
+  height: 5px;
+}
+
+h2.logup-title {
+  position: relative;
+  z-index: 4;
+}
+
+h2.logup-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+.logup-container {
+  display: flex;
+  gap: 1em;
+  align-items: center;
+  justify-content: center;
+  padding: 23% 7%;
+  flex-direction: column;
+}
+button.logup-link span {
+  font-weight: 900;
+  font-size: 22px;
+}
+button.logup-link {
+  width: 100%;
+}
+
+.logup-toggle {
+  width: 100%;
+}
+li.navbar-agent-link a {
+  display: flex;
+  align-items: center;
+  height: 4rem;
 }

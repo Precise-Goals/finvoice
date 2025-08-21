@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Quattrocento:wght@400;700&display=swap");
+
 .intro-container {
   position: fixed;
   inset: 0;
@@ -30,15 +32,16 @@
 .text {
   position: absolute;
   display: flex;
-  gap: 8px;
+  gap: 1px;
   z-index: 3;
 }
 
 .text span {
   font-size: 2.9rem;
-  font-weight: 800;
-  color: rgb(3, 3, 3);
+  font-weight: 900;
+  color: rgb(3, 3, 3);  
   opacity: 0;
+  letter-spacing: 0.1px;
   transform: scale(0.8) translateY(20px);
 }
 
@@ -59,4 +62,21 @@
   position: absolute;
   opacity: 0;
   z-index: 0;
+}
+.text {
+  margin-top: 79%;
+  font-weight: 900;
+  font-family: "Poppins";
+}
+
+.intro-container {
+  padding-bottom: 10rem;
+}
+
+intro-container img {
+  width: 40rem;
+}
+
+.intro-container img {
+  width: 100%;
 }
