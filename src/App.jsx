@@ -17,7 +17,7 @@ import { UserContext, useUser } from "./UserContext";
 import LogUp from "./Containers/LogUp";
 import Navbar from "./Components/Navbar";
 import IntroAnimation from "./Components/IntroAnimation";
-import Usar from "./Components/usar";
+import { UsawerR } from "./Components/UsawerR";
 
 function UserProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -104,7 +104,7 @@ function App() {
           <div className="wrapper">
             <UserProvider>
               <BrowserRouter>
-                <Usar />
+                <UsawerR />
                 <div className="divsa"></div>
 
                 <Navbar />
