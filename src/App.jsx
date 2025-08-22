@@ -10,7 +10,6 @@ import { app } from "./firebase";
 import {
   getAuth,
   onAuthStateChanged,
-  signInAnonymously,
   signOut,
 } from "firebase/auth";
 import { UserContext, useUser } from "./UserContext";
@@ -38,11 +37,6 @@ function UserProvider({ children }) {
       }
       setLoading(false);
     });
-
-    // Sign in anonymously if not already signed in
-    if (!auth.currentUser) {
-      signInAnonymously(auth).catch(console.error);
-    }
 
     return () => unsubscribe();
   }, []);

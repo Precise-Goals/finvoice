@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { 
-  getAuth, 
-  signOut, 
-  onAuthStateChanged, 
-  updateProfile 
+import {
+  getAuth,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
 } from "firebase/auth";
-import { 
-  getDatabase, 
-  ref, 
-  get, 
-  update 
-} from "firebase/database";
+import { getDatabase, ref, get, update } from "firebase/database";
+import { PiSignOutBold } from "react-icons/pi";
+
 import { app } from "../firebase";
 import "./style.css";
 import { useNavigate } from "react-router-dom";
@@ -23,54 +20,60 @@ export const Profile = () => {
   const [success, setSuccess] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [aadhaarError, setAadhaarError] = useState("");
   const [panError, setPanError] = useState("");
-  
+
   const [editData, setEditData] = useState({
     name: "",
-    contact: "",
+    aadhaar: "",
     mobile: "",
     panCard: "",
-    avatar: 1
+    avatar: 1,
+    email: "", // auto-fetched, non-editable
   });
-  
+
   const navigate = useNavigate();
   const auth = getAuth(app);
   const db = getDatabase(app);
-  const panCardRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
 
-  const fetchUserDetails = useCallback(async (uid) => {
-    try {
-      const userRef = ref(db, `users/${uid}`);
-      const snapshot = await get(userRef);
-      
-      if (snapshot.exists()) {
-        const userData = snapshot.val();
-        setUserDetails(userData);
-        setEditData({
-          name: userData.name || "",
-          contact: userData.contact || "",
-          mobile: userData.mobile || "",
-          panCard: userData.panCard || "",
-          avatar: userData.avatar || 1
-        });
+  const panCardRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+  const aadhaarRegex = /^\d{4}-\d{4}-\d{4}$/;
+
+  const fetchUserDetails = useCallback(
+    async (uid, currentUser) => {
+      try {
+        const userRef = ref(db, `users/${uid}`);
+        const snapshot = await get(userRef);
+        if (snapshot.exists()) {
+          const userData = snapshot.val();
+          setUserDetails(userData);
+          setEditData({
+            name: userData.name || "",
+            aadhaar: userData.aadhaar || "",
+            mobile: userData.mobile || "",
+            panCard: userData.panCard || "",
+            avatar: userData.avatar || 1,
+            email: userData.email || currentUser?.email || "",
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching user details:", err);
+        setError("Failed to load user details");
       }
-    } catch (err) {
-      console.error("Error fetching user details:", err);
-      setError("Failed to load user details");
-    }
-  }, [db]);
+    },
+    [db]
+  );
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        await fetchUserDetails(currentUser.uid);
+        await fetchUserDetails(currentUser.uid, currentUser);
       } else {
         navigate("/login");
       }
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, [auth, navigate, fetchUserDetails]);
 
@@ -86,14 +89,15 @@ export const Profile = () => {
 
   const handleEditToggle = () => {
     if (isEditing) {
-      // Reset edit data when canceling
       setEditData({
         name: userDetails?.name || "",
-        contact: userDetails?.contact || "",
+        aadhaar: userDetails?.aadhaar || "",
         mobile: userDetails?.mobile || "",
         panCard: userDetails?.panCard || "",
-        avatar: userDetails?.avatar || 1
+        avatar: userDetails?.avatar || 1,
+        email: userDetails?.email || user?.email || "",
       });
+      setAadhaarError("");
       setPanError("");
     }
     setIsEditing(!isEditing);
@@ -103,31 +107,62 @@ export const Profile = () => {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setEditData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
 
-  const handlePanCardBlur = () => {
-    if (editData.panCard && !panCardRegex.test(editData.panCard)) {
-      setPanError("Please enter PAN Card in format: ABCDE1234F (5 letters, 4 digits, 1 letter)");
+    if (name === "aadhaar") {
+      let digits = value.replace(/\D/g, "").slice(0, 12);
+      let formatted = digits;
+      if (digits.length > 8) {
+        formatted = `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(
+          8,
+          12
+        )}`;
+      } else if (digits.length > 4) {
+        formatted = `${digits.slice(0, 4)}-${digits.slice(4, 8)}`;
+      }
+      setEditData((prev) => ({ ...prev, aadhaar: formatted }));
+    } else if (name === "panCard") {
+      let val = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      let lettersPart1 = val.slice(0, 5).replace(/[^A-Z]/g, "");
+      let numbersPart = val.slice(5, 9).replace(/[^0-9]/g, "");
+      let lettersPart2 = val.slice(9, 10).replace(/[^A-Z]/g, "");
+      let formattedPAN = lettersPart1 + numbersPart + lettersPart2;
+      setEditData((prev) => ({ ...prev, panCard: formattedPAN.slice(0, 10) }));
     } else {
-      setPanError("");
+      setEditData((prev) => ({ ...prev, [name]: value }));
     }
   };
 
+  const handleAadhaarBlur = () => {
+    setAadhaarError(
+      editData.aadhaar && !aadhaarRegex.test(editData.aadhaar)
+        ? "Aadhaar must be 12 digits, formatted as XXXX-XXXX-XXXX"
+        : ""
+    );
+  };
 
+  const handlePanCardBlur = () => {
+    setPanError(
+      editData.panCard &&
+        (!panCardRegex.test(editData.panCard) || editData.panCard.length !== 10)
+        ? "PAN Card must be 10 characters: ABCDE1234F"
+        : ""
+    );
+  };
 
   const saveProfile = async () => {
-    // Validate required fields
     if (!editData.name.trim()) {
       setError("Name is required");
       return;
     }
-
-    if (editData.panCard && !panCardRegex.test(editData.panCard)) {
-      setError("Please enter a valid PAN Card format");
+    if (editData.aadhaar && !aadhaarRegex.test(editData.aadhaar)) {
+      setError("Please enter a valid Aadhaar number in XXXX-XXXX-XXXX format");
+      return;
+    }
+    if (
+      editData.panCard &&
+      (!panCardRegex.test(editData.panCard) || editData.panCard.length !== 10)
+    ) {
+      setError("Please enter a valid 10-character PAN Card");
       return;
     }
 
@@ -135,51 +170,32 @@ export const Profile = () => {
       setError("");
       const updatedData = {
         ...editData,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
 
-      // Update in Realtime Database
       await update(ref(db, `users/${user.uid}`), updatedData);
-
-      // Update Firebase Auth profile
       await updateProfile(user, {
         displayName: editData.name,
-        photoURL: `/public/${editData.avatar}.png`
+        photoURL: `/public/${editData.avatar}.png`,
       });
 
-      // Update local state
-      setUserDetails(prev => ({ ...prev, ...updatedData }));
+      setUserDetails((prev) => ({ ...prev, ...updatedData }));
       setIsEditing(false);
       setSuccess("Profile updated successfully!");
-
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(""), 3000);
-    } catch (error) {
-      console.error("Error saving profile:", error);
+    } catch (err) {
+      console.error("Error saving profile:", err);
       setError("Failed to save profile. Please try again.");
     }
   };
 
-  const handleSaveProfile = async () => {
-    await saveProfile();
-  };
-
-  const handleAvatarSelect = (avatarNum) => {
-    setEditData(prev => ({ ...prev, avatar: avatarNum }));
-    setShowAvatarPicker(false);
-  };
-
-  if (loading) {
+  if (loading)
     return (
       <div className="profile-container">
         <div className="loading">Loading...</div>
       </div>
     );
-  }
-
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <div className="profile-container">
@@ -192,8 +208,8 @@ export const Profile = () => {
             </button>
           ) : (
             <div className="edit-actions">
-              <button className="save-btn" onClick={handleSaveProfile}>
-                Save Changes
+              <button className="save-btn" onClick={saveProfile}>
+                Save
               </button>
               <button className="cancel-btn" onClick={handleEditToggle}>
                 Cancel
@@ -201,7 +217,7 @@ export const Profile = () => {
             </div>
           )}
           <button className="logout-btn" onClick={handleLogout} title="Logout">
-            Logout
+            <PiSignOutBold />
           </button>
         </div>
       </div>
@@ -210,17 +226,17 @@ export const Profile = () => {
       {success && <div className="profile-success">{success}</div>}
 
       <div className="profile-content">
-        {/* Avatar Display */}
         <div className="profile-avatar">
           <img
-            src={`/public/${isEditing ? editData.avatar : (userDetails?.avatar || 1)}.png`}
+            src={`/public/${
+              isEditing ? editData.avatar : userDetails?.avatar || 1
+            }.png`}
             alt="User Avatar"
             className="avatar-display"
             onClick={() => isEditing && setShowAvatarPicker(true)}
-            style={{ cursor: isEditing ? 'pointer' : 'default' }}
           />
           {isEditing && (
-            <button 
+            <button
               className="avatar-change-btn"
               onClick={() => setShowAvatarPicker(true)}
             >
@@ -229,7 +245,6 @@ export const Profile = () => {
           )}
         </div>
 
-        {/* User Information */}
         <div className="profile-info">
           <div className="info-item">
             <label>Name:</label>
@@ -243,49 +258,55 @@ export const Profile = () => {
                 placeholder="Enter your name"
               />
             ) : (
-              <span>{userDetails?.name || user.displayName || "Not provided"}</span>
+              <span>
+                {userDetails?.name || user.displayName || "Not provided"}
+              </span>
             )}
           </div>
 
           <div className="info-item">
             <label>Email:</label>
-            <span>{user.email}</span>
+            <span>{userDetails?.email || user?.email}</span>{" "}
+            {/* Non-editable */}
           </div>
 
           <div className="info-item">
-            <label>Contact:</label>
+            <label>Aadhaar Card:</label>
             {isEditing ? (
-              <input
-                type="text"
-                name="contact"
-                value={editData.contact}
-                onChange={handleInputChange}
-                className="edit-input"
-                placeholder="Enter your contact address"
-              />
+              <div className="aadhaar-input-container">
+                <input
+                  type="text"
+                  name="aadhaar"
+                  value={editData.aadhaar}
+                  onChange={handleInputChange}
+                  onBlur={handleAadhaarBlur}
+                  className={`edit-input ${aadhaarError ? "error-input" : ""}`}
+                  placeholder="XXXX-XXXX-XXXX"
+                  maxLength={14}
+                />
+                {aadhaarError && (
+                  <div className="field-error">{aadhaarError}</div>
+                )}
+              </div>
             ) : (
-              <span>{userDetails?.contact || "Not provided"}</span>
+              <span>{userDetails?.aadhaar || "Not provided"}</span>
             )}
           </div>
 
           <div className="info-item">
             <label>Mobile:</label>
             {isEditing ? (
-              <div className="mobile-input-container">
-                <input
-                  type="tel"
-                  name="mobile"
-                  value={editData.mobile}
-                  onChange={handleInputChange}
-                  className="edit-input"
-                  placeholder="Enter 10-digit mobile number"
-                  maxLength="10"
-                />
-              </div>
+              <input
+                type="tel"
+                name="mobile"
+                value={editData.mobile}
+                onChange={handleInputChange}
+                className="edit-input"
+                placeholder="Enter 10-digit mobile number"
+                maxLength={10}
+              />
             ) : (
-              <div className="mobile-display">
-                <span>{userDetails?.mobile || "Not provided"}</span>
-              </div>
+              <span>{userDetails?.mobile || "Not provided"}</span>
             )}
           </div>
 
@@ -296,13 +317,12 @@ export const Profile = () => {
                 <input
                   type="text"
                   name="panCard"
-                  value={editData.panCard}
+                  value={editData.panCard.toUpperCase()}
                   onChange={handleInputChange}
                   onBlur={handlePanCardBlur}
-                  className={`edit-input ${panError ? 'error-input' : ''}`}
+                  className={`edit-input ${panError ? "error-input" : ""}`}
                   placeholder="ABCDE1234F"
-                  maxLength="10"
-                  style={{ textTransform: 'uppercase' }}
+                  maxLength={10}
                 />
                 {panError && <div className="field-error">{panError}</div>}
               </div>
@@ -310,33 +330,9 @@ export const Profile = () => {
               <span>{userDetails?.panCard || "Not provided"}</span>
             )}
           </div>
-
-          <div className="info-item">
-            {/* <label>Member Since:</label>
-            <span>
-              {userDetails?.createdAt
-                ? new Date(userDetails.createdAt).toLocaleDateString()
-                : new Date(user.metadata.creationTime).toLocaleDateString()}
-            </span> */}
-          </div>
-
-          <div className="info-item">
-            {/* <label>Last Login:</label>
-            <span>
-              {new Date(user.metadata.lastSignInTime).toLocaleString()}
-            </span> */}
-          </div>
         </div>
-
-        {/* Change Password Button */}
-        {!isEditing && (
-          <div className="profile-actions">
-            <button className="change-password-btn">Change Password</button>
-          </div>
-        )}
       </div>
 
-      {/* Avatar Picker Modal */}
       {showAvatarPicker && (
         <div className="modal-overlay">
           <div className="avatar-picker-modal">
@@ -345,8 +341,12 @@ export const Profile = () => {
               {[1, 2, 3, 4, 5, 6].map((num) => (
                 <div
                   key={num}
-                  className={`avatar-option ${editData.avatar === num ? 'selected' : ''}`}
-                  onClick={() => handleAvatarSelect(num)}
+                  className={`avatar-option ${
+                    editData.avatar === num ? "selected" : ""
+                  }`}
+                  onClick={() =>
+                    setEditData((prev) => ({ ...prev, avatar: num }))
+                  }
                 >
                   <img
                     src={`/public/${num}.png`}
@@ -356,8 +356,8 @@ export const Profile = () => {
                 </div>
               ))}
             </div>
-            <button 
-              className="modal-close-btn" 
+            <button
+              className="modal-close-btn"
               onClick={() => setShowAvatarPicker(false)}
             >
               Close

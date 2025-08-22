@@ -202,13 +202,21 @@ const Chat = () => {
                 fontStyle: "italic",
               }}
             >
-              FinVoice is thinking...
+              thinking...
             </span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
-      <form onSubmit={sendMessage} style={{ display: "flex", gap: 8 }}>
+      <form
+        onSubmit={sendMessage}
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          justifyContent: "center",
+          gap: 8,
+        }}
+      >
         <button className="ccall">
           <IoCallSharp />
         </button>
@@ -217,7 +225,7 @@ const Chat = () => {
           value={input}
           disabled={loading}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about budgeting, savings, expenses..."
+          placeholder="Ask about budget"
           style={{
             flex: 1,
             padding: 10,
@@ -232,7 +240,7 @@ const Chat = () => {
           type="submit"
           disabled={loading || !input.trim()}
           style={{
-            padding: "0 18px",
+            padding: "0 6%",
             borderRadius: 8,
             border: "none",
             background: loading || !input.trim() ? "#ccc" : "#000",
