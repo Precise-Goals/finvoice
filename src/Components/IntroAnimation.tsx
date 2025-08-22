@@ -1,7 +1,5 @@
-
 import React, { useEffect, useRef } from "react";
 import { gsap } from "gsap";
-
 
 interface IntroAnimationProps {
   onComplete: () => void;
@@ -14,44 +12,32 @@ const IntroAnimation: React.FC<IntroAnimationProps> = ({ onComplete }) => {
     const container = containerRef.current;
     if (!container) return;
 
-    const center = container.querySelector(".center");
-    const textSpans = container.querySelectorAll(".text span");
-    const lineH = container.querySelector(".line.h");
-    const ripple = container.querySelector(".ripple");
-    const particles = container.querySelectorAll(".particle");
+    const center = container.querySelector<HTMLDivElement>(".center");
+    const textSpans = container.querySelectorAll<HTMLSpanElement>(".text span");
+    const lineH = container.querySelector<HTMLDivElement>(".line.h");
+    const ripple = container.querySelector<HTMLDivElement>(".ripple");
+    const particles = container.querySelectorAll<HTMLDivElement>(".particle");
+
+    if (!center || !lineH || !ripple) return;
 
     const tl = gsap.timeline({
       onComplete,
-      defaults: { ease: "power3.inOut" }
+      defaults: { ease: "power3.inOut" },
     });
 
-    tl.to(ripple, {
-      scale: 5.5,
-      opacity: 0,
-      duration: 1.6
-    })
-    .to(
-      center,
-      {
-        scale: 2.2,
-        duration: 0.4,
-        yoyo: true,
-        repeat: 1,
-        ease: "power1.inOut"
-      },
-      "-=1.2"
-    )
-    
-      // Horizontal line slight stretch
+    tl.to(ripple, { scale: 5.5, opacity: 0, duration: 1.6 })
       .to(
-        lineH,
+        center,
         {
-          scaleX: 2.45, // 5% larger than the center circle
-          duration: 0.6,
-          ease: "power2.out"
+          scale: 2.2,
+          duration: 0.4,
+          yoyo: true,
+          repeat: 1,
+          ease: "power1.inOut",
         },
         "-=1.2"
       )
+      .to(lineH, { scaleX: 2.45, duration: 0.6, ease: "power2.out" }, "-=1.2")
       .to(
         textSpans,
         {
@@ -60,11 +46,13 @@ const IntroAnimation: React.FC<IntroAnimationProps> = ({ onComplete }) => {
           y: 0,
           stagger: 0.1,
           duration: 0.5,
-          ease: "back.out(1.7)"
+          ease: "back.out(1.7)",
         },
         "-=0.5"
-      )
-      .to(
+      );
+
+    if (particles.length > 0) {
+      tl.to(
         particles,
         {
           opacity: 1,
@@ -73,19 +61,24 @@ const IntroAnimation: React.FC<IntroAnimationProps> = ({ onComplete }) => {
           scale: 0.9,
           duration: 1,
           stagger: 0.05,
-          ease: "power3.out"
+          ease: "power3.out",
         },
         "-=0.4"
-      )
-      .to(particles, { opacity: 0, duration: 0.6 }, "-=0.3")
-      // Slide away
-      .to(container, { y: "-100%", duration: 1, ease: "power2.inOut" });
+      ).to(particles, { opacity: 0, duration: 1 }, "-=0.3");
+    }
 
+    tl.to(container, {
+      y: "-20%",
+      opacity: 0,
+      duration: 1.5,
+      ease: "power2.inOut",
+    });
+
+    // ✅ Correct cleanup: return a function that kills the timeline
     return () => {
-      tl.kill(); // cleanup on unmount
+      tl.kill();
     };
   }, [onComplete]);
-
   return (
     <div ref={containerRef} className="intro-container">
       <div className="center"></div>
@@ -97,6 +90,9 @@ const IntroAnimation: React.FC<IntroAnimationProps> = ({ onComplete }) => {
       <img src="LOGO.png" alt="logo" />
       <div className="line h"></div>
       <div className="ripple"></div>
+      {/* {[...Array(8)].map((_, i) => (
+        <div key={i} className="particle"></div>
+      ))} */}
     </div>
   );
 };

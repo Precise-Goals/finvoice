@@ -216,3 +216,131 @@ li.navbar-agent-link a {
   align-items: center;
   height: 4rem;
 }
+.chat-header {
+  text-align: center;
+}
+
+.finchat {
+  text-align: center;
+}
+.chatcont form {
+  padding: 0% 4%;
+}
+button.ccall {
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 1% 3%;
+  border-radius: 4rem;
+  border: 1px solid;
+  background: black;
+  color: white;
+}
+.DashStart {
+  display: flex;
+  justify-content: space-around;
+  margin: 3.5% 0;
+}
+
+.conte {
+  padding: 1% 6%;
+}
+.Piechar {
+  width: 100%;
+  height: 12rem;
+}
+
+.lolaksnla {
+  display: flex;
+  flex-direction: row;
+  align-content: center;
+  justify-content: center;
+  align-items: center;
+}
+
+.sasofja {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 56%;
+}
+
+.pieh {
+  height: 10rem;
+  width: 100%;
+}
+
+.knsoaigj {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.safjosohtn {
+  width: 100%;
+}
+
+p.da {
+  font-weight: 900;
+  font-size: 53px;
+  margin: 5% 0 1% 6%;
+  font-family: "Poppins";
+  color: #5f4ba1;
+  letter-spacing: -0.9px;
+}
+.dashc {
+  border: 1px solid black;
+  border-radius: 2rem;
+  padding: 6% 8%;
+  background: black;
+  color: white;
+}
+
+.dashc p {
+  font-size: 12px;
+}
+
+.dashc h1 {
+  font-size: 24px;
+  border-radius: 10rem;
+}
+
+.spending h1 {
+  font-size: 24px;
+}
+
+.spending {
+  padding: 5% 4%;
+  border: 1px solid black;
+  border-radius: 2rem;
+}
+.spending p {
+  font-size: 12px;
+}
+
+.dashc,
+.spending {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+}
+.chr {
+  height: 218px;
+  position: absolute;
+  left: -6%;
+  width: 98%;
+  border-radius: 12rem;
+}
+
+.lineChar {
+  border-radius: 9rem;
+  min-height: 250px;
+}
+.lineChar h5 {
+  font-size: 25px;
+  font-weight: 900;
+  margin-left: 2%;
+}

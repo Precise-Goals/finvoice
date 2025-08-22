@@ -18,6 +18,7 @@ import LogUp from "./Containers/LogUp";
 import Navbar from "./Components/Navbar";
 import IntroAnimation from "./Components/IntroAnimation";
 import { UsawerR } from "./Components/UsawerR";
+import { Profile } from "./Components/Profile";
 
 function UserProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -89,6 +90,11 @@ const routeData = [
     route: "/logup",
     component: LogUp,
     private: false,
+  },
+  {
+    route: "/profile",
+    component: Profile,
+    private: true,
   },
 ];
 
