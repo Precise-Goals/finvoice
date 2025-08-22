@@ -57,7 +57,7 @@ li.navbar-agent-link {
   background: black;
   color: white;
   transform: translateX(-50%);
-  padding: 1% 4%;
+  /* padding: 1% 4%; */
   border-radius: 5rem;
 }
 img.man {
@@ -254,8 +254,9 @@ button.ccall {
   flex-direction: column;
 }
 .Piechar {
-  width: 100%;
-  height: 12rem;
+    width: 100%;
+    position: relative;
+    height: 100%;
 }
 
 .lolaksnla {
@@ -314,7 +315,7 @@ p.da {
 }
 
 .spending h1 {
-  font-size: 24px;
+  font-size: 95%;
 }
 
 .spending {
@@ -508,4 +509,15 @@ button.remove-goal {
 button.remove-goal {
   right: 3%;
   top: 8%;
+}
+.inv {
+  white-space: nowrap;
+  gap: 0.5em;
+}
+.voice-transcript {
+  display: none;
+}
+.DashStart {
+  gap: 1em;
+  margin: 9% 0;
 }

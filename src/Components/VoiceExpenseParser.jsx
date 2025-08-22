@@ -1,210 +1,119 @@
-// src/components/VoiceExpenseParser.jsx
-import React, { useEffect } from "react";
-import { getDatabase, ref, push } from "firebase/database";
-import { useUser } from "../UserContext";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import {
+  getFirestore,
+  doc,
+  updateDoc,
+  getDoc,
+  setDoc,
+} from "firebase/firestore";
+import { app } from "../firebase";
 
-const foodKeywords = [
-  "food",
-  "restaurant",
-  "meal",
-  "snack",
-  "coffee",
-  "pizza",
-  "burger",
-  "chai",
-  "tea",
-  "breakfast",
-  "lunch",
-  "dinner",
-  "biryani",
-  "thali",
-  "samosa",
-  "paratha",
-  "paneer",
-  "dal",
-  "roti",
-  "naan",
-  "chapati",
-  "pasta",
-  "noodles",
-  "momos",
-  "juice",
-  "shake",
-  "icecream",
-  "dessert",
-  "fastfood",
-  "cafeteria",
-  "canteen",
-  "khaana",
-  "khana",
-  "tiffin",
-  "sandwich",
-  "hotdog",
-  "fries",
-  "pizza slice",
-  "chocolate",
-  "cookies",
-  "cake",
-  "dosa",
-  "idli",
-  "vada",
-  "pakora",
-  "omelette",
-  "salad",
-  "milkshake",
-  "latte",
-  "cappuccino",
-  "tea shop",
-  "coffee shop",
-  "food court",
-  "tandoori",
-  "masala",
-  "butter naan",
-  "khichdi",
-  "pav bhaji",
-  "chole bhature",
-  "golgappa",
-  "pani puri",
-  "chaat",
-  "maggie",
-  "kebab",
-  "shawarma",
-  "pancake",
-  "waffle",
-  "soup",
-  "pudding",
-  "sushi",
-  "ramen",
-  "dim sum",
-  "fried rice",
-  "manchurian",
-];
+const db = getFirestore(app);
 
-const educationKeywords = [
-  "tuition",
-  "books",
-  "course",
-  "education",
-  "school",
-  "college",
-  "university",
-  "class",
-  "lecture",
-  "assignment",
-  "exam",
-  "test",
-  "homework",
-  "study",
-  "notes",
-  "curriculum",
-  "syllabus",
-  "coaching",
-  "tutorial",
-  "training",
-  "lab",
-  "library",
-  "project",
-  "research",
-  "paper",
-  "degree",
-  "diploma",
-  "certificate",
-  "scholarship",
-  "internship",
-  "mentor",
-  "professor",
-  "teacher",
-  "faculty",
-  "admission",
-];
+const VoiceExpenseParser = ({ transcript }) => {
+  const [expenses, setExpenses] = useState({
+    food: 0,
+    medical: 0,
+    education: 0,
+    others: 0,
+  });
 
-const medicalKeywords = [
-  "medical",
-  "doctor",
-  "hospital",
-  "clinic",
-  "medicine",
-  "health",
-  "pharma",
-  "pharmacy",
-  "lab",
-  "diagnosis",
-  "treatment",
-  "surgery",
-  "operation",
-  "injection",
-  "vaccine",
-  "immunization",
-  "consultation",
-  "checkup",
-  "x-ray",
-  "mri",
-  "scan",
-  "ultrasound",
-  "blood test",
-  "prescription",
-  "pill",
-  "tablet",
-  "capsule",
-  "ointment",
-  "cream",
-  "syrup",
-  "drops",
-  "antibiotic",
-  "painkiller",
-  "vitamin",
-  "supplement",
-  "physiotherapy",
-  "rehabilitation",
-  "therapy",
-  "nursing",
-  "emergency",
-  "icu",
-  "ambulance",
-];
+  // keep track of last processed transcript
+  const lastTranscriptRef = useRef("");
 
-const VoiceExpenseParser = ({ voiceText, setExpenses }) => {
-  const { user } = useUser();
-  const db = getDatabase();
+  const handleVoiceCommand = useCallback(async (command) => {
+    if (!command) return;
 
-  useEffect(() => {
-    if (!voiceText || !user?.uid) return;
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${
+          import.meta.env.VITE_GEMINI_API_KEY
+        }`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `You are an expense parser. Extract category (food, medical, education, others) and amount from this text: "${command}". 
+Return JSON like: {"category":"food","amount":1200}`,
+                  },
+                ],
+              },
+            ],
+          }),
+        }
+      );
 
-    const categorizeExpense = (text) => {
-      const lower = text.toLowerCase();
-      if (foodKeywords.some((kw) => lower.includes(kw))) return "Food";
-      if (educationKeywords.some((kw) => lower.includes(kw)))
-        return "Education";
-      if (medicalKeywords.some((kw) => lower.includes(kw))) return "Medical";
-      return "Other";
-    };
+      const data = await response.json();
+      const parsed = JSON.parse(
+        data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
+      );
 
-    const parseExpenses = (text) => {
-      const amounts = text.match(/\d+(\.\d+)?/g)?.map(Number) || [];
-      const sentences = text.split(/and|,|;/);
+      if (!parsed.category || !parsed.amount) return;
 
-      const parsed = amounts.map((amt, i) => ({
-        amount: amt,
-        category: categorizeExpense(sentences[i] || text),
-        description: sentences[i]?.trim() || text,
-        timestamp: Date.now(),
+      const category = parsed.category.toLowerCase();
+
+      // Ensure amount is numeric, remove commas/currency symbols
+      let rawAmount = String(parsed.amount).trim();
+      rawAmount = rawAmount.replace(/[^\d.]/g, "");
+      const amount = parseFloat(rawAmount);
+
+      if (isNaN(amount) || amount <= 0) {
+        console.warn("Invalid amount received:", parsed.amount);
+        return;
+      }
+      if (amount > 1_000_000) {
+        console.warn("Rejected suspiciously large amount:", amount);
+        return;
+      }
+
+      // Update local state
+      setExpenses((prev) => ({
+        ...prev,
+        [category]: (prev[category] || 0) + amount,
       }));
 
-      setExpenses(parsed);
+      // Update Firestore
+      const userRef = doc(db, "expenses", "user123"); // replace with actual user ID
+      const snap = await getDoc(userRef);
 
-      // append to Firebase
-      const userTransRef = ref(db, `users/${user.uid}/transac`);
-      parsed.forEach((item) => {
-        push(userTransRef, item).catch((err) =>
-          console.error("Error saving transaction:", err)
-        );
-      });
-    };
+      if (snap.exists()) {
+        await updateDoc(userRef, {
+          [category]: (snap.data()[category] || 0) + amount,
+        });
+      } else {
+        await setDoc(userRef, {
+          food: 0,
+          medical: 0,
+          education: 0,
+          others: 0,
+          [category]: amount,
+        });
+      }
+    } catch (err) {
+      console.error("AI parsing failed:", err);
+    }
+  }, []);
 
-    parseExpenses(voiceText);
-  }, [voiceText, setExpenses, user, db]);
+  useEffect(() => {
+    if (transcript && transcript !== lastTranscriptRef.current) {
+      lastTranscriptRef.current = transcript; // save latest processed
+      handleVoiceCommand(transcript);
+    }
+  }, [transcript, handleVoiceCommand]);
 
-  return null;
+  return (
+    <div>
+      <h2>Expense Summary</h2>
+      <p>Food: ₹{expenses.food}</p>
+      <p>Medical: ₹{expenses.medical}</p>
+      <p>Education: ₹{expenses.education}</p>
+      <p>Others: ₹{expenses.others}</p>
+    </div>
+  );
 };
 
 export default VoiceExpenseParser;
