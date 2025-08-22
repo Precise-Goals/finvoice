@@ -509,7 +509,7 @@ const Dashboard = () => {
         <button
           onClick={handleReset}
           style={{
-            background: "linear-gradient(135deg, #ef4444, #dc2626)",
+            background: "black",
             color: "white",
             padding: "12px 24px",
             borderRadius: "12px",
