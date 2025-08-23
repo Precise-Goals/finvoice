@@ -254,9 +254,9 @@ button.ccall {
   flex-direction: column;
 }
 .Piechar {
-    width: 100%;
-    position: relative;
-    height: 100%;
+  width: 100%;
+  position: relative;
+  height: 100%;
 }
 
 .lolaksnla {
@@ -520,4 +520,55 @@ button.remove-goal {
 .DashStart {
   gap: 1em;
   margin: 9% 0;
+}
+.popup-content {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5em;
+  padding: 3% 0;
+}
+
+.popup-content input {
+  width: 100%;
+  font-size: 20px;
+  padding: 3% 5%;
+  border-radius: 3rem;
+  border: 1px solid;
+}
+
+.popup-content h3 {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.popup-content button {
+  font-size: 20px;
+  padding: 3% 8%;
+  border-radius: 5rem;
+  background: black;
+  color: white;
+  margin-top: 7%;
+}
+
+.popup-content select {
+  font-size: 20px;
+  padding: 3% 8%;
+  min-width: 100%;
+  border-radius: 4rem;
+}
+
+button.close-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+button.close-btn {
+  padding: 0% 4%;
+  font-size: 28px;
+  font-weight: 700;
+  top: -3%;
+  right: -1%;
 }

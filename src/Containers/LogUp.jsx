@@ -117,7 +117,7 @@ const LogUp = () => {
         // Update user profile with display name and avatar
         await updateProfile(user, {
           displayName: formData.name,
-          photoURL: `/public/${formData.selectedAvatar}.png`,
+          photoURL: `/${formData.selectedAvatar}.png`,
         });
 
         // Save additional user data to Firestore
@@ -272,7 +272,7 @@ const LogUp = () => {
                     onClick={() => handleAvatarSelect(num)}
                   >
                     <img
-                      src={`/public/${num}.png`}
+                      src={`/${num}.png`}
                       alt={`Avatar ${num}`}
                       className="avatar-image"
                     />

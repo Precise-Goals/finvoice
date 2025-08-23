@@ -151,7 +151,7 @@ const Chat = () => {
       <div
         style={{
           background: "#f7f7f7",
-          borderRadius: 12,
+          borderRadius: "3rem",
           padding: 16,
           minHeight: 350,
           maxHeight: "32.5rem",
