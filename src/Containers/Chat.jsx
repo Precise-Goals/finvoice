@@ -33,6 +33,10 @@ const Chat = () => {
   const db = getFirestore(app);
   const messagesEndRef = useRef(null);
 
+  const handleCall = () => {
+    window.location.href = "https://assista.pages.dev/";
+  };
+
   // Listen to chat history
   useEffect(() => {
     if (!user) return;
@@ -217,7 +221,7 @@ const Chat = () => {
           gap: 8,
         }}
       >
-        <button className="ccall">
+        <button className="ccall" onClick={() => handleCall()}>
           <IoCallSharp />
         </button>
         <input
