@@ -9,10 +9,18 @@ import { IoClose } from "react-icons/io5";
 import { transcribeAudio } from "../services/sarvam";
 
 const LANGUAGES = [
-  { code: "unknown", name: "Auto-Detect", flag: "🌐", native: "Auto" },
+  { code: "unknown", name: "Auto-Detect (22+ Indic)", flag: "🌐", native: "Auto" },
   { code: "hi-IN", name: "Hindi", flag: "🇮🇳", native: "हिंदी" },
   { code: "mr-IN", name: "Marathi", flag: "🇮🇳", native: "मराठी" },
   { code: "en-IN", name: "English (India)", flag: "🇮🇳", native: "English" },
+  { code: "bn-IN", name: "Bengali", flag: "🇮🇳", native: "বাংলা" },
+  { code: "te-IN", name: "Telugu", flag: "🇮🇳", native: "తెలుగు" },
+  { code: "ta-IN", name: "Tamil", flag: "🇮🇳", native: "தமிழ்" },
+  { code: "gu-IN", name: "Gujarati", flag: "🇮🇳", native: "ગુજરાતી" },
+  { code: "kn-IN", name: "Kannada", flag: "🇮🇳", native: "ಕನ್ನಡ" },
+  { code: "ml-IN", name: "Malayalam", flag: "🇮🇳", native: "മലയാളം" },
+  { code: "pa-IN", name: "Punjabi", flag: "🇮🇳", native: "ਪੰਜਾਬੀ" },
+  { code: "od-IN", name: "Odia", flag: "🇮🇳", native: "ଓଡ଼ିଆ" },
 ];
 
 const Navbar = ({ onVoiceText }) => {
@@ -135,7 +143,7 @@ const Navbar = ({ onVoiceText }) => {
 
       mediaRecorder.start();
       setListening(true);
-      setTranscript("Listening... Speak clearly in English, Hindi, or Marathi");
+      setTranscript("Listening... Speak clearly in any Indian language");
     } catch (err) {
       console.error("Microphone access error:", err);
       alert(
@@ -247,7 +255,9 @@ const Navbar = ({ onVoiceText }) => {
                   boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
                   padding: "8px",
                   zIndex: 1001,
-                  minWidth: "160px",
+                  minWidth: "180px",
+                  maxHeight: "320px",
+                  overflowY: "auto",
                   border: "1px solid rgba(255,255,255,0.1)",
                 }}
               >

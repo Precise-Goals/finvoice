@@ -7,10 +7,18 @@ import { transcribeAudio, chatCompletion, parseExpenseWithSarvam, checkSarvamHea
 import ReactMarkdown from "react-markdown";
 
 const LANGUAGES = [
-  { code: "unknown", name: "Auto-Detect", flag: "🌐" },
-  { code: "en-IN", name: "English (India)", flag: "🇮🇳" },
+  { code: "unknown", name: "Auto-Detect (22+ Indic)", flag: "🌐" },
   { code: "hi-IN", name: "Hindi (हिंदी)", flag: "🇮🇳" },
   { code: "mr-IN", name: "Marathi (मराठी)", flag: "🇮🇳" },
+  { code: "en-IN", name: "English (India)", flag: "🇮🇳" },
+  { code: "bn-IN", name: "Bengali (বাংলা)", flag: "🇮🇳" },
+  { code: "te-IN", name: "Telugu (తెలుగు)", flag: "🇮🇳" },
+  { code: "ta-IN", name: "Tamil (தமிழ்)", flag: "🇮🇳" },
+  { code: "gu-IN", name: "Gujarati (ગુજરાતી)", flag: "🇮🇳" },
+  { code: "kn-IN", name: "Kannada (ಕನ್ನಡ)", flag: "🇮🇳" },
+  { code: "ml-IN", name: "Malayalam (മലയാളം)", flag: "🇮🇳" },
+  { code: "pa-IN", name: "Punjabi (ਪੰਜਾਬੀ)", flag: "🇮🇳" },
+  { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)", flag: "🇮🇳" },
 ];
 
 const AgentWraper = () => {
