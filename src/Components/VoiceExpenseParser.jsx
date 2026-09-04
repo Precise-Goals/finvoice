@@ -7,6 +7,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { app } from "../firebase";
+import { parseExpenseWithSarvam } from "../services/sarvam";
 
 const db = getFirestore(app);
 
@@ -25,41 +26,13 @@ const VoiceExpenseParser = ({ transcript }) => {
     if (!command) return;
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${
-          import.meta.env.VITE_GEMINI_API_KEY
-        }`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `You are an expense parser. Extract category (food, medical, education, others) and amount from this text: "${command}". 
-Return JSON like: {"category":"food","amount":1200}`,
-                  },
-                ],
-              },
-            ],
-          }),
-        }
-      );
+      // Use Sarvam AI to parse expense category and amount
+      const parsed = await parseExpenseWithSarvam(command);
 
-      const data = await response.json();
-      const parsed = JSON.parse(
-        data.candidates?.[0]?.content?.parts?.[0]?.text || "{}"
-      );
-
-      if (!parsed.category || !parsed.amount) return;
+      if (!parsed || !parsed.category || !parsed.amount) return;
 
       const category = parsed.category.toLowerCase();
-
-      // Ensure amount is numeric, remove commas/currency symbols
-      let rawAmount = String(parsed.amount).trim();
-      rawAmount = rawAmount.replace(/[^\d.]/g, "");
-      const amount = parseFloat(rawAmount);
+      const amount = parsed.amount;
 
       if (isNaN(amount) || amount <= 0) {
         console.warn("Invalid amount received:", parsed.amount);
@@ -77,7 +50,7 @@ Return JSON like: {"category":"food","amount":1200}`,
       }));
 
       // Update Firestore
-      const userRef = doc(db, "expenses", "user123"); // replace with actual user ID
+      const userRef = doc(db, "expenses", "user123");
       const snap = await getDoc(userRef);
 
       if (snap.exists()) {
@@ -94,7 +67,7 @@ Return JSON like: {"category":"food","amount":1200}`,
         });
       }
     } catch (err) {
-      console.error("AI parsing failed:", err);
+      console.error("Sarvam AI parsing failed:", err);
     }
   }, []);
 
@@ -107,7 +80,7 @@ Return JSON like: {"category":"food","amount":1200}`,
 
   return (
     <div>
-      <h2>Expense Summary</h2>
+      <h2>Expense Summary (Powered by Sarvam AI)</h2>
       <p>Food: ₹{expenses.food}</p>
       <p>Medical: ₹{expenses.medical}</p>
       <p>Education: ₹{expenses.education}</p>

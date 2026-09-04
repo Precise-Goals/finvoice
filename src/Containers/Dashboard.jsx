@@ -13,6 +13,7 @@ import Navbar from "../Components/Navbar";
 import LineChart from "../Components/LineChart";
 import PieChar from "../Components/PieChar";
 import { app } from "../firebase";
+import { parseExpenseWithSarvam } from "../services/sarvam";
 
 const Dashboard = () => {
   const [voiceText, setVoiceText] = useState("");
@@ -146,7 +147,7 @@ const Dashboard = () => {
     },
     [user, categoryTotals, totalBalance]
   );
-  // Mock AI Analysis (replace with actual AI API like OpenAI/Gemini)
+  // Fallback Keyword Analysis (if Sarvam AI is offline or returns empty)
   const mockAIAnalysis = useCallback(async (text, language) => {
     await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate API call
 
@@ -282,13 +283,13 @@ const Dashboard = () => {
       confidence: 0.85,
     };
   }, []);
-  // AI Analysis Function for Voice Text
+  // Sarvam AI Analysis Function for Voice Text
   const analyzeVoiceText = useCallback(
     async (text) => {
       if (!text || text.trim() === "") return null;
 
       setProcessingVoice(true);
-      console.log("Analyzing voice text:", text);
+      console.log("Analyzing voice text with Sarvam AI:", text);
 
       try {
         // Detect language
@@ -299,8 +300,13 @@ const Dashboard = () => {
         if (hindiPattern.test(text)) detectedLang = "hi";
         if (marathiPattern.test(text)) detectedLang = "mr";
 
-        // AI Analysis
-        const result = await mockAIAnalysis(text, detectedLang);
+        // Try Sarvam AI Parsing first
+        let result = await parseExpenseWithSarvam(text);
+
+        // Fallback to keyword matching if AI fails or returns no amount
+        if (!result || !result.amount) {
+          result = await mockAIAnalysis(text, detectedLang);
+        }
 
         if (result && result.amount > 0) {
           await processTransaction(result, text, detectedLang);

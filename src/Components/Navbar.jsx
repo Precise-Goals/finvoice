@@ -6,243 +6,171 @@ import { IoChatboxEllipses } from "react-icons/io5";
 import { LuGoal } from "react-icons/lu";
 import { MdKeyboardVoice, MdLanguage } from "react-icons/md";
 import { IoClose } from "react-icons/io5";
+import { transcribeAudio } from "../services/sarvam";
+
+const LANGUAGES = [
+  { code: "unknown", name: "Auto-Detect", flag: "🌐", native: "Auto" },
+  { code: "hi-IN", name: "Hindi", flag: "🇮🇳", native: "हिंदी" },
+  { code: "mr-IN", name: "Marathi", flag: "🇮🇳", native: "मराठी" },
+  { code: "en-IN", name: "English (India)", flag: "🇮🇳", native: "English" },
+];
 
 const Navbar = ({ onVoiceText }) => {
   const [listening, setListening] = useState(false);
-  const [recognition, setRecognition] = useState(null);
-  const [currentLanguage, setCurrentLanguage] = useState("en-US");
+  const [processing, setProcessing] = useState(false);
+  const [currentLanguage, setCurrentLanguage] = useState("unknown");
   const [transcript, setTranscript] = useState("");
+  const [detectedLang, setDetectedLang] = useState("");
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const [voiceLevel, setVoiceLevel] = useState(0);
   const location = useLocation();
 
-  // Use refs to avoid stale closures
-  const listeningRef = useRef(listening);
-  const currentLanguageRef = useRef(currentLanguage);
-  const voiceLevelIntervalRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
-  // Update refs when state changes
-  useEffect(() => {
-    listeningRef.current = listening;
-  }, [listening]);
-
-  useEffect(() => {
-    currentLanguageRef.current = currentLanguage;
-  }, [currentLanguage]);
-
-  // Language options
-  const languages = [
-    { code: "en-US", name: "English", flag: "🇺🇸", native: "English" },
-    { code: "hi-IN", name: "Hindi", flag: "🇮🇳", native: "हिंदी" },
-    { code: "mr-IN", name: "Marathi", flag: "🇮🇳", native: "मराठी" },
-  ];
-
-  // Auto-detect language based on text content
-  const autoDetectLanguage = useCallback((text, recognition) => {
-    const hindiPattern = /[\u0900-\u097F]/;
-
-    if (hindiPattern.test(text)) {
-      const marathiWords = ["आहे", "आला", "गेला", "येत", "जात", "करत", "होत"];
-      const hindiWords = ["है", "आया", "गया", "आता", "जाता", "करता", "होता"];
-
-      const hasMarathi = marathiWords.some((word) => text.includes(word));
-      const hasHindi = hindiWords.some((word) => text.includes(word));
-
-      if (hasMarathi && currentLanguageRef.current !== "mr-IN") {
-        setCurrentLanguage("mr-IN");
-        if (recognition) {
-          recognition.lang = "mr-IN";
-        }
-      } else if (hasHindi && currentLanguageRef.current !== "hi-IN") {
-        setCurrentLanguage("hi-IN");
-        if (recognition) {
-          recognition.lang = "hi-IN";
-        }
-      }
-    } else if (currentLanguageRef.current !== "en-US") {
-      setCurrentLanguage("en-US");
-      if (recognition) {
-        recognition.lang = "en-US";
-      }
+  // Stop microphone recording and transcribe with Sarvam AI
+  const stopRecording = useCallback(() => {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      mediaRecorderRef.current.stop();
     }
-  }, []); // No dependencies needed since we use refs
+    setListening(false);
 
-  // Initialize Speech Recognition only once
-  useEffect(() => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      console.error("Speech Recognition not supported in this browser");
-      return;
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setVoiceLevel(0);
+  }, []);
 
-    const rec = new SpeechRecognition();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = currentLanguage;
-    rec.maxAlternatives = 1;
+  // Start microphone recording and stream to Sarvam Saaras STT
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
 
-    rec.onstart = () => {
-      console.log(
-        "Speech recognition started for language:",
-        currentLanguageRef.current
-      );
-      setListening(true);
-      setTranscript("");
-    };
+      // Audio visualizer setup
+      try {
+        const AudioContextClass =
+          window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          const audioCtx = new AudioContextClass();
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          const source = audioCtx.createMediaStreamSource(stream);
+          source.connect(analyser);
 
-    rec.onresult = (event) => {
-      let interimTranscript = "";
-      let finalTranscript = "";
+          audioContextRef.current = audioCtx;
+          analyserRef.current = analyser;
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcriptPiece = event.results[i][0].transcript;
-        const confidence = event.results[i][0].confidence;
-
-        if (event.results[i].isFinal) {
-          finalTranscript += transcriptPiece + " ";
-          console.log(
-            `Final transcript (${currentLanguageRef.current}):`,
-            transcriptPiece,
-            `Confidence: ${confidence || "N/A"}`
-          );
-        } else {
-          interimTranscript += transcriptPiece;
-        }
-      }
-
-      // Update local transcript for display
-      setTranscript(finalTranscript + interimTranscript);
-
-      // Send final transcript to parent component
-      if (finalTranscript.trim()) {
-        onVoiceText && onVoiceText(finalTranscript.trim());
-        // Auto-detect and switch language if needed
-        autoDetectLanguage(finalTranscript, rec);
-      }
-    };
-
-    rec.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      setListening(false);
-
-      // Handle specific errors with user-friendly messages
-      switch (event.error) {
-        case "not-allowed":
-          alert(
-            "Microphone access denied. Please allow microphone access in your browser settings."
-          );
-          break;
-        case "no-speech":
-          console.log(
-            "No speech detected. Recognition will restart automatically."
-          );
-          // Auto-restart for no-speech errors with delay
-          setTimeout(() => {
-            if (!listeningRef.current) {
-              try {
-                rec.start();
-              } catch (error) {
-                console.error("Error restarting recognition:", error);
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const updateLevel = () => {
+            if (analyserRef.current) {
+              analyserRef.current.getByteFrequencyData(dataArray);
+              let sum = 0;
+              for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
               }
+              const average = sum / dataArray.length;
+              setVoiceLevel(Math.min(100, Math.round((average / 128) * 100)));
+              animationFrameRef.current = requestAnimationFrame(updateLevel);
             }
-          }, 1500);
-          break;
-        case "audio-capture":
-          alert(
-            "No microphone found. Please connect a microphone and try again."
-          );
-          break;
-        case "network":
-          alert(
-            "Network error occurred. Please check your internet connection."
-          );
-          break;
-        default:
-          console.log("Recognition error:", event.error);
-      }
-    };
-
-    rec.onend = () => {
-      console.log("Speech recognition ended");
-      setListening(false);
-      setVoiceLevel(0);
-      // Clear voice level interval
-      if (voiceLevelIntervalRef.current) {
-        clearInterval(voiceLevelIntervalRef.current);
-        voiceLevelIntervalRef.current = null;
-      }
-    };
-
-    // Voice level simulation
-    rec.onaudiostart = () => {
-      // Clear any existing interval
-      if (voiceLevelIntervalRef.current) {
-        clearInterval(voiceLevelIntervalRef.current);
-      }
-
-      voiceLevelIntervalRef.current = setInterval(() => {
-        setVoiceLevel(Math.random() * 100);
-      }, 100);
-    };
-
-    setRecognition(rec);
-
-    // Cleanup function
-    return () => {
-      if (rec) {
-        try {
-          rec.stop();
-        } catch (error) {
-          console.log("Error stopping recognition on cleanup:", error);
+          };
+          updateLevel();
         }
+      } catch (audioErr) {
+        console.warn("AudioContext visualizer not available:", audioErr);
       }
-      if (voiceLevelIntervalRef.current) {
-        clearInterval(voiceLevelIntervalRef.current);
+
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: "audio/webm",
+        });
+
+        if (audioBlob.size > 0) {
+          setProcessing(true);
+          try {
+            const res = await transcribeAudio(audioBlob, {
+              languageCode: currentLanguage,
+              model: "saaras:v3",
+            });
+
+            if (res.transcript) {
+              setTranscript(res.transcript);
+              setDetectedLang(res.language_code || currentLanguage);
+              if (onVoiceText) {
+                onVoiceText(res.transcript);
+              }
+            } else {
+              setTranscript("No speech detected. Please try again.");
+            }
+          } catch (err) {
+            console.error("Sarvam STT Error:", err);
+            setTranscript(`Recognition error: ${err.message}`);
+          } finally {
+            setProcessing(false);
+          }
+        }
+      };
+
+      mediaRecorder.start();
+      setListening(true);
+      setTranscript("Listening... Speak clearly in English, Hindi, or Marathi");
+    } catch (err) {
+      console.error("Microphone access error:", err);
+      alert(
+        "Microphone access error. Please check microphone permissions in your browser."
+      );
+      setListening(false);
+    }
+  }, [currentLanguage, onVoiceText]);
+
+  const toggleListening = useCallback(() => {
+    if (listening) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  }, [listening, startRecording, stopRecording]);
+
+  // Clean up recording on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (
+        audioContextRef.current &&
+        audioContextRef.current.state !== "closed"
+      ) {
+        audioContextRef.current.close().catch(() => {});
       }
     };
-  }, []); // Empty dependency array - only run once
-
-  // Update recognition language when currentLanguage changes
-  useEffect(() => {
-    if (recognition && recognition.lang !== currentLanguage) {
-      recognition.lang = currentLanguage;
-    }
-  }, [currentLanguage, recognition]);
-
-  // Define toggleListening with useCallback
-  const toggleListening = useCallback(() => {
-    if (!recognition) {
-      console.error("Speech recognition not available");
-      return;
-    }
-
-    if (!listening) {
-      try {
-        recognition.lang = currentLanguageRef.current;
-        recognition.start();
-        console.log(
-          "Starting recognition with language:",
-          currentLanguageRef.current
-        );
-      } catch (error) {
-        console.error("Error starting recognition:", error);
-      }
-    } else {
-      try {
-        recognition.stop();
-        setListening(false);
-        setTranscript("");
-      } catch (error) {
-        console.error("Error stopping recognition:", error);
-      }
-    }
-  }, [recognition, listening]); // Only depend on recognition and listening
+  }, []);
 
   const getCurrentLanguageInfo = useCallback(() => {
     return (
-      languages.find((lang) => lang.code === currentLanguage) || languages[0]
+      LANGUAGES.find((lang) => lang.code === currentLanguage) || LANGUAGES[0]
     );
   }, [currentLanguage]);
 
@@ -256,10 +184,10 @@ const Navbar = ({ onVoiceText }) => {
     {
       route: "/agent",
       component: <MdKeyboardVoice style={{ color: "white" }} />,
-      title: "Agent",
+      title: "Voice Agent",
     },
     { route: "/goals", component: <LuGoal />, title: "Goals" },
-    { route: "/chat", component: <IoChatboxEllipses />, title: "Chat" },
+    { route: "/chat", component: <IoChatboxEllipses />, title: "FinVoice Chat" },
   ];
 
   return (
@@ -281,7 +209,91 @@ const Navbar = ({ onVoiceText }) => {
             </li>
           ))}
 
-          {/* Language Selector */}
+          {/* Language Selector Button */}
+          <li className="navbar-item" style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowLanguageMenu((prev) => !prev)}
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                fontSize: "1.3rem",
+                color: "inherit",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "8px",
+              }}
+              title={`Voice Language: ${getCurrentLanguageInfo().name}`}
+            >
+              <MdLanguage />
+              <span style={{ fontSize: "11px", fontWeight: 700 }}>
+                {getCurrentLanguageInfo().flag}
+              </span>
+            </button>
+
+            {/* Language Menu Dropdown */}
+            {showLanguageMenu && (
+              <div
+                className="language-menu"
+                style={{
+                  position: "absolute",
+                  bottom: "100%",
+                  right: 0,
+                  marginBottom: "10px",
+                  background: "#1f2937",
+                  color: "#fff",
+                  borderRadius: "12px",
+                  boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+                  padding: "8px",
+                  zIndex: 1001,
+                  minWidth: "160px",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    padding: "4px 8px",
+                    color: "#9ca3af",
+                  }}
+                >
+                  Sarvam STT Language
+                </div>
+                {LANGUAGES.map((lang) => (
+                  <button
+                    key={lang.code}
+                    onClick={() => {
+                      setCurrentLanguage(lang.code);
+                      setShowLanguageMenu(false);
+                    }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      width: "100%",
+                      padding: "8px 10px",
+                      background:
+                        currentLanguage === lang.code
+                          ? "rgba(99, 102, 241, 0.3)"
+                          : "transparent",
+                      border: "none",
+                      color: currentLanguage === lang.code ? "#818cf8" : "#fff",
+                      borderRadius: "6px",
+                      cursor: "pointer",
+                      fontSize: "13px",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span>{lang.flag}</span>
+                    <span>{lang.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </li>
 
           {/* Voice Recognition Button */}
           <li className="navbar-agent-link">
@@ -289,8 +301,10 @@ const Navbar = ({ onVoiceText }) => {
               onClick={toggleListening}
               style={{
                 background: listening
-                  ? "linear-gradient(135deg,rgb(31, 10, 10),rgb(82, 15, 15))"
-                  : "linear-gradient(135deg,rgb(0, 0, 0),rgb(17, 38, 94))",
+                  ? "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
+                  : processing
+                  ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)"
+                  : "linear-gradient(135deg, #4f46e5 0%, #1e1b4b 100%)",
                 border: "none",
                 cursor: "pointer",
                 fontSize: "1.8rem",
@@ -305,26 +319,30 @@ const Navbar = ({ onVoiceText }) => {
                 position: "relative",
                 transition: "all 0.3s ease",
                 boxShadow: listening
-                  ? "0 0 20px rgba(239, 68, 68, 0.4)"
-                  : "0 4px 12px rgba(59, 130, 246, 0.3)",
+                  ? `0 0 ${15 + voiceLevel * 0.3}px rgba(239, 68, 68, 0.8)`
+                  : "0 4px 12px rgba(79, 70, 229, 0.4)",
               }}
               title={
                 listening
-                  ? "Stop Listening"
-                  : `Start Listening (${getCurrentLanguageInfo().native})`
+                  ? "Stop Listening (Send to Sarvam AI)"
+                  : processing
+                  ? "Sarvam AI is processing speech..."
+                  : `Speak to FinVoice (${getCurrentLanguageInfo().native})`
               }
             >
               {listening ? <IoClose /> : <MdKeyboardVoice />}
 
-              {/* Voice Level Indicator */}
+              {/* Dynamic Soundwave Halo using voiceLevel */}
               {listening && (
                 <div
                   style={{
                     position: "absolute",
-                    inset: "-4px",
+                    inset: `-${4 + voiceLevel * 0.1}px`,
                     borderRadius: "50%",
-                    border: "2px solid rgba(255, 255, 255, 0.6)",
-                    animation: "pulse 1.5s infinite",
+                    border: "2px solid rgba(255, 255, 255, 0.8)",
+                    opacity: 0.5 + voiceLevel * 0.005,
+                    transform: `scale(${1 + voiceLevel * 0.003})`,
+                    transition: "all 0.1s ease",
                   }}
                 />
               )}
@@ -333,49 +351,86 @@ const Navbar = ({ onVoiceText }) => {
         </ul>
       </nav>
 
-      {/* Voice Transcript Display */}
+      {/* Floating Transcript Toast */}
       {transcript && (
         <div
           className="voice-transcript"
           style={{
             position: "fixed",
-            bottom: "20px",
+            bottom: "24px",
             left: "20px",
             right: "20px",
-            backgroundColor: "rgba(0, 0, 0, 0.9)",
+            backgroundColor: "rgba(17, 24, 39, 0.95)",
             color: "white",
             padding: "16px 20px",
             borderRadius: "16px",
             zIndex: 1000,
             maxWidth: "600px",
             margin: "0 auto",
-            backdropFilter: "blur(10px)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
+            backdropFilter: "blur(12px)",
+            border: "1px solid rgba(255, 255, 255, 0.15)",
+            boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
           }}
         >
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: "12px",
+              justifyContent: "space-between",
               marginBottom: "8px",
             }}
           >
-            <div
-              style={{
-                width: "12px",
-                height: "12px",
-                borderRadius: "50%",
-                backgroundColor: listening ? "#10b981" : "#6b7280",
-                animation: listening ? "pulse 1.5s infinite" : "none",
-              }}
-            />
-            <span style={{ fontSize: "12px", color: "#d1d5db" }}>
-              {listening ? "Listening" : "Processing"} •{" "}
-              {getCurrentLanguageInfo().native}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div
+                style={{
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  backgroundColor: listening
+                    ? "#ef4444"
+                    : processing
+                    ? "#f59e0b"
+                    : "#10b981",
+                  animation: listening ? "pulse 1.5s infinite" : "none",
+                }}
+              />
+              <span style={{ fontSize: "12px", color: "#d1d5db" }}>
+                {listening
+                  ? "Recording with Sarvam AI..."
+                  : processing
+                  ? "Transcribing with Saaras..."
+                  : `Transcribed (${detectedLang || getCurrentLanguageInfo().native})`}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span
+                style={{
+                  fontSize: "10px",
+                  background: "rgba(99, 102, 241, 0.2)",
+                  color: "#a5b4fc",
+                  padding: "2px 8px",
+                  borderRadius: "10px",
+                  fontWeight: 600,
+                }}
+              >
+                Sarvam AI Saaras
+              </span>
+              <button
+                onClick={() => setTranscript("")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#9ca3af",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  padding: "2px",
+                }}
+              >
+                <IoClose />
+              </button>
+            </div>
           </div>
-          <div style={{ fontSize: "16px", lineHeight: "1.4" }}>
+          <div style={{ fontSize: "15px", lineHeight: "1.4", fontWeight: 500 }}>
             {transcript}
           </div>
         </div>
@@ -393,27 +448,21 @@ const Navbar = ({ onVoiceText }) => {
         />
       )}
 
-      {/* CSS Animations */}
       <style>{`
         @keyframes pulse {
-          0%,
-          100% {
+          0%, 100% {
             opacity: 1;
             transform: scale(1);
           }
           50% {
-            opacity: 0.7;
-            transform: scale(1.05);
+            opacity: 0.5;
+            transform: scale(1.15);
           }
         }
 
         .navbar-item.active a {
           background: rgba(255, 255, 255, 0.2);
           border-radius: 8px;
-        }
-
-        .language-menu button:hover {
-          background-color: #f3f4f6 !important;
         }
       `}</style>
     </>
