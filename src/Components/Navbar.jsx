@@ -4,33 +4,19 @@ import { FaHome } from "react-icons/fa";
 import { RiBarChartBoxAiFill } from "react-icons/ri";
 import { IoChatboxEllipses } from "react-icons/io5";
 import { LuGoal } from "react-icons/lu";
-import { MdKeyboardVoice, MdLanguage } from "react-icons/md";
+import { MdKeyboardVoice } from "react-icons/md";
 import { IoClose } from "react-icons/io5";
-import { transcribeAudio } from "../services/sarvam";
-
-const LANGUAGES = [
-  { code: "unknown", name: "Auto-Detect (22+ Indic)", flag: "🌐", native: "Auto" },
-  { code: "hi-IN", name: "Hindi", flag: "🇮🇳", native: "हिंदी" },
-  { code: "mr-IN", name: "Marathi", flag: "🇮🇳", native: "मराठी" },
-  { code: "en-IN", name: "English (India)", flag: "🇮🇳", native: "English" },
-  { code: "bn-IN", name: "Bengali", flag: "🇮🇳", native: "বাংলা" },
-  { code: "te-IN", name: "Telugu", flag: "🇮🇳", native: "తెలుగు" },
-  { code: "ta-IN", name: "Tamil", flag: "🇮🇳", native: "தமிழ்" },
-  { code: "gu-IN", name: "Gujarati", flag: "🇮🇳", native: "ગુજરાતી" },
-  { code: "kn-IN", name: "Kannada", flag: "🇮🇳", native: "ಕನ್ನಡ" },
-  { code: "ml-IN", name: "Malayalam", flag: "🇮🇳", native: "മലയാളം" },
-  { code: "pa-IN", name: "Punjabi", flag: "🇮🇳", native: "ਪੰਜਾਬੀ" },
-  { code: "od-IN", name: "Odia", flag: "🇮🇳", native: "ଓଡ଼ିଆ" },
-];
+import { transcribeAudio, parseExpenseWithSarvam } from "../services/sarvam";
+import { useFinancialData } from "../context/FinancialDataContext";
 
 const Navbar = ({ onVoiceText }) => {
+  const { processTransaction } = useFinancialData();
   const [listening, setListening] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [currentLanguage, setCurrentLanguage] = useState("unknown");
   const [transcript, setTranscript] = useState("");
   const [detectedLang, setDetectedLang] = useState("");
-  const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const [voiceLevel, setVoiceLevel] = useState(0);
+  const [micStatus, setMicStatus] = useState("idle"); // 'idle' | 'listening' | 'speaking' | 'pausing' | 'processing'
   const location = useLocation();
 
   const mediaRecorderRef = useRef(null);
@@ -39,20 +25,41 @@ const Navbar = ({ onVoiceText }) => {
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
 
-  // Stop microphone recording and transcribe with Sarvam AI
+  const hasSpokenRef = useRef(false);
+  const isStoppingRef = useRef(false);
+  const isHoldingRef = useRef(false);
+  const pressStartTimeRef = useRef(0);
+  const durationTimerRef = useRef(null);
+  const [recordDuration, setRecordDuration] = useState(0);
+
+  // Stop microphone recording cleanly
   const stopRecording = useCallback(() => {
-    if (
-      mediaRecorderRef.current &&
-      mediaRecorderRef.current.state !== "inactive"
-    ) {
-      mediaRecorderRef.current.stop();
+    isHoldingRef.current = false;
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
     }
-    setListening(false);
+
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
 
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
+
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== "inactive"
+    ) {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.warn("MediaRecorder stop warning:", e);
+      }
+    }
+    setListening(false);
+
     if (audioContextRef.current && audioContextRef.current.state !== "closed") {
       audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
@@ -60,20 +67,33 @@ const Navbar = ({ onVoiceText }) => {
     setVoiceLevel(0);
   }, []);
 
-  // Start microphone recording and stream to Sarvam Saaras STT
+  // Start microphone recording with Push-To-Talk
   const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      isStoppingRef.current = false;
+      isHoldingRef.current = true;
+      pressStartTimeRef.current = Date.now();
+      setRecordDuration(0);
       audioChunksRef.current = [];
+      hasSpokenRef.current = false;
+      setMicStatus("listening");
 
-      // Audio visualizer setup
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // If user released pointer before getUserMedia resolved
+      if (!isHoldingRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      // Audio visualizer setup & Smart Voice Activity Detection (VAD)
       try {
         const AudioContextClass =
           window.AudioContext || window.webkitAudioContext;
         if (AudioContextClass) {
           const audioCtx = new AudioContextClass();
           const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 64;
+          analyser.fftSize = 128;
+          analyser.smoothingTimeConstant = 0.3;
           const source = audioCtx.createMediaStreamSource(stream);
           source.connect(analyser);
 
@@ -81,19 +101,31 @@ const Navbar = ({ onVoiceText }) => {
           analyserRef.current = analyser;
 
           const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          const updateLevel = () => {
-            if (analyserRef.current) {
-              analyserRef.current.getByteFrequencyData(dataArray);
-              let sum = 0;
-              for (let i = 0; i < dataArray.length; i++) {
-                sum += dataArray[i];
-              }
-              const average = sum / dataArray.length;
-              setVoiceLevel(Math.min(100, Math.round((average / 128) * 100)));
-              animationFrameRef.current = requestAnimationFrame(updateLevel);
+          const SPEECH_THRESHOLD = 8; // Normalized audio level indicating active speech
+          const PAUSE_DURATION_MS = 2200; // 2.2s silence after speech triggers smart auto-stop
+          const INITIAL_TIMEOUT_MS = 4500; // 4.5s silence if user never started speaking
+
+          const checkAudioAndPause = () => {
+            if (!analyserRef.current || isStoppingRef.current) return;
+
+            analyserRef.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
             }
+            const average = sum / dataArray.length;
+            const currentLevel = Math.min(100, Math.round((average / 128) * 100));
+            setVoiceLevel(currentLevel);
+
+            if (currentLevel >= SPEECH_THRESHOLD) {
+              hasSpokenRef.current = true;
+              setMicStatus("speaking");
+            }
+
+            animationFrameRef.current = requestAnimationFrame(checkAudioAndPause);
           };
-          updateLevel();
+
+          animationFrameRef.current = requestAnimationFrame(checkAudioAndPause);
         }
       } catch (audioErr) {
         console.warn("AudioContext visualizer not available:", audioErr);
@@ -115,55 +147,124 @@ const Navbar = ({ onVoiceText }) => {
           type: "audio/webm",
         });
 
-        if (audioBlob.size > 0) {
+        const durationMs = Date.now() - pressStartTimeRef.current;
+
+        // Accidental tap protection
+        if (durationMs < 350) {
+          setTranscript("Hold mic to speak, release to send!");
+          setListening(false);
+          setMicStatus("idle");
+          return;
+        }
+
+        // Only send to STT if user held for valid duration
+        if (audioBlob.size > 500) {
           setProcessing(true);
+          setMicStatus("processing");
           try {
+            // Sarvam Saaras model automatically detects 22+ Indic languages and English
             const res = await transcribeAudio(audioBlob, {
-              languageCode: currentLanguage,
+              languageCode: "unknown",
               model: "saaras:v3",
             });
 
-            if (res.transcript) {
+            if (res.transcript && res.transcript.trim()) {
               setTranscript(res.transcript);
-              setDetectedLang(res.language_code || currentLanguage);
+              setDetectedLang(res.language_code || "Auto");
               if (onVoiceText) {
                 onVoiceText(res.transcript);
               }
+
+              // Autonomous transaction logging & RAG assistant routing
+              try {
+                const parsed = await parseExpenseWithSarvam(res.transcript);
+                if (parsed && parsed.amount > 0) {
+                  await processTransaction(
+                    parsed,
+                    res.transcript,
+                    res.language_code || "en"
+                  );
+                  const actionLabel = parsed.type === "income" ? "Credited" : parsed.type === "savings" ? "Saved" : "Logged";
+                  setTranscript(
+                    `✅ ${actionLabel} ₹${parsed.amount.toLocaleString("en-IN")} ${
+                      parsed.type === "income" ? "as Income" : `under ${parsed.category || parsed.type}`
+                    }`
+                  );
+                } else {
+                  // Non-transaction speech
+                  setTranscript(res.transcript);
+                }
+              } catch (parseErr) {
+                console.warn("Autonomous voice parsing fallback:", parseErr);
+              }
             } else {
-              setTranscript("No speech detected. Please try again.");
+              setTranscript("No clear speech detected. Please hold and speak clearly.");
             }
           } catch (err) {
             console.error("Sarvam STT Error:", err);
             setTranscript(`Recognition error: ${err.message}`);
           } finally {
             setProcessing(false);
+            setMicStatus("idle");
           }
+        } else {
+          setTranscript("Audio too short. Please hold mic and speak.");
+          setMicStatus("idle");
         }
       };
 
       mediaRecorder.start();
       setListening(true);
-      setTranscript("Listening... Speak clearly in any Indian language");
+      setTranscript("Listening... Keep holding and speak in any language");
+
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      durationTimerRef.current = setInterval(() => {
+        setRecordDuration((prev) => +(prev + 0.1).toFixed(1));
+      }, 100);
     } catch (err) {
       console.error("Microphone access error:", err);
       alert(
         "Microphone access error. Please check microphone permissions in your browser."
       );
+      isHoldingRef.current = false;
       setListening(false);
+      setMicStatus("idle");
     }
-  }, [currentLanguage, onVoiceText]);
+  }, [onVoiceText, processTransaction]);
 
-  const toggleListening = useCallback(() => {
-    if (listening) {
-      stopRecording();
-    } else {
-      startRecording();
+  // Pointer event handlers for Push-To-Talk
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.debug("Pointer capture fallback:", err);
     }
-  }, [listening, startRecording, stopRecording]);
+    startRecording();
+  };
+
+  const handlePointerUp = (e) => {
+    e.preventDefault();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      console.debug("Pointer release fallback:", err);
+    }
+    stopRecording();
+  };
+
+  const handlePointerCancel = () => {
+    stopRecording();
+  };
 
   // Clean up recording on unmount
   useEffect(() => {
     return () => {
+      if (durationTimerRef.current) {
+        clearInterval(durationTimerRef.current);
+      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -176,11 +277,15 @@ const Navbar = ({ onVoiceText }) => {
     };
   }, []);
 
-  const getCurrentLanguageInfo = useCallback(() => {
-    return (
-      LANGUAGES.find((lang) => lang.code === currentLanguage) || LANGUAGES[0]
-    );
-  }, [currentLanguage]);
+  // Auto-dismiss transcript toast after 7 seconds of inactivity
+  useEffect(() => {
+    if (transcript && !listening && !processing) {
+      const timer = setTimeout(() => {
+        setTranscript("");
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [transcript, listening, processing]);
 
   const Path = [
     { route: "/", component: <FaHome />, title: "Home" },
@@ -217,101 +322,29 @@ const Navbar = ({ onVoiceText }) => {
             </li>
           ))}
 
-          {/* Language Selector Button */}
-          <li className="navbar-item" style={{ position: "relative" }}>
-            <button
-              onClick={() => setShowLanguageMenu((prev) => !prev)}
-              style={{
-                background: "transparent",
-                border: "none",
-                cursor: "pointer",
-                fontSize: "1.3rem",
-                color: "inherit",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                padding: "8px",
-              }}
-              title={`Voice Language: ${getCurrentLanguageInfo().name}`}
-            >
-              <MdLanguage />
-              <span style={{ fontSize: "11px", fontWeight: 700 }}>
-                {getCurrentLanguageInfo().flag}
-              </span>
-            </button>
-
-            {/* Language Menu Dropdown */}
-            {showLanguageMenu && (
-              <div
-                className="language-menu"
-                style={{
-                  position: "absolute",
-                  bottom: "100%",
-                  right: 0,
-                  marginBottom: "10px",
-                  background: "#1f2937",
-                  color: "#fff",
-                  borderRadius: "12px",
-                  boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-                  padding: "8px",
-                  zIndex: 1001,
-                  minWidth: "180px",
-                  maxHeight: "320px",
-                  overflowY: "auto",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    textTransform: "uppercase",
-                    padding: "4px 8px",
-                    color: "#9ca3af",
-                  }}
-                >
-                  Sarvam STT Language
-                </div>
-                {LANGUAGES.map((lang) => (
-                  <button
-                    key={lang.code}
-                    onClick={() => {
-                      setCurrentLanguage(lang.code);
-                      setShowLanguageMenu(false);
-                    }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      width: "100%",
-                      padding: "8px 10px",
-                      background:
-                        currentLanguage === lang.code
-                          ? "rgba(99, 102, 241, 0.3)"
-                          : "transparent",
-                      border: "none",
-                      color: currentLanguage === lang.code ? "#818cf8" : "#fff",
-                      borderRadius: "6px",
-                      cursor: "pointer",
-                      fontSize: "13px",
-                      textAlign: "left",
-                    }}
-                  >
-                    <span>{lang.flag}</span>
-                    <span>{lang.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </li>
-
-          {/* Voice Recognition Button */}
+          {/* Push-To-Talk Center Mic Button */}
           <li className="navbar-agent-link">
             <button
-              onClick={toggleListening}
+              onPointerDown={handlePointerDown}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerCancel}
+              onKeyDown={(e) => {
+                if ((e.key === " " || e.key === "Enter") && !listening) {
+                  e.preventDefault();
+                  startRecording();
+                }
+              }}
+              onKeyUp={(e) => {
+                if (e.key === " " || e.key === "Enter") {
+                  e.preventDefault();
+                  stopRecording();
+                }
+              }}
               style={{
                 background: listening
-                  ? "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
+                  ? micStatus === "speaking"
+                    ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
+                    : "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)"
                   : processing
                   ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)"
                   : "linear-gradient(135deg, #4f46e5 0%, #1e1b4b 100%)",
@@ -327,17 +360,24 @@ const Navbar = ({ onVoiceText }) => {
                 alignItems: "center",
                 justifyContent: "center",
                 position: "relative",
-                transition: "all 0.3s ease",
+                userSelect: "none",
+                touchAction: "none",
+                WebkitUserSelect: "none",
+                transition: "all 0.2s ease",
                 boxShadow: listening
-                  ? `0 0 ${15 + voiceLevel * 0.3}px rgba(239, 68, 68, 0.8)`
+                  ? `0 0 ${15 + voiceLevel * 0.3}px ${
+                      micStatus === "speaking"
+                        ? "rgba(16, 185, 129, 0.8)"
+                        : "rgba(239, 68, 68, 0.8)"
+                    }`
                   : "0 4px 12px rgba(79, 70, 229, 0.4)",
               }}
               title={
                 listening
-                  ? "Stop Listening (Send to Sarvam AI)"
+                  ? `Push to Talk: Recording (${recordDuration}s)... Release to process`
                   : processing
                   ? "Sarvam AI is processing speech..."
-                  : `Speak to FinVoice (${getCurrentLanguageInfo().native})`
+                  : "Push to Talk: Hold to speak, release to send"
               }
             >
               {listening ? <IoClose /> : <MdKeyboardVoice />}
@@ -349,7 +389,11 @@ const Navbar = ({ onVoiceText }) => {
                     position: "absolute",
                     inset: `-${4 + voiceLevel * 0.1}px`,
                     borderRadius: "50%",
-                    border: "2px solid rgba(255, 255, 255, 0.8)",
+                    border: `2px solid ${
+                      micStatus === "speaking"
+                        ? "rgba(16, 185, 129, 0.9)"
+                        : "rgba(255, 255, 255, 0.8)"
+                    }`,
                     opacity: 0.5 + voiceLevel * 0.005,
                     transform: `scale(${1 + voiceLevel * 0.003})`,
                     transition: "all 0.1s ease",
@@ -397,7 +441,11 @@ const Navbar = ({ onVoiceText }) => {
                   height: "10px",
                   borderRadius: "50%",
                   backgroundColor: listening
-                    ? "#ef4444"
+                    ? micStatus === "speaking"
+                      ? "#10b981"
+                      : micStatus === "pausing"
+                      ? "#f59e0b"
+                      : "#ef4444"
                     : processing
                     ? "#f59e0b"
                     : "#10b981",
@@ -406,10 +454,14 @@ const Navbar = ({ onVoiceText }) => {
               />
               <span style={{ fontSize: "12px", color: "#d1d5db" }}>
                 {listening
-                  ? "Recording with Sarvam AI..."
+                  ? micStatus === "speaking"
+                    ? "Smart Mic: Hearing voice... (auto-stops on pause)"
+                    : micStatus === "pausing"
+                    ? "Smart Mic: Pause detected, finalizing..."
+                    : "Smart Mic: Listening... Speak in any language"
                   : processing
-                  ? "Transcribing with Saaras..."
-                  : `Transcribed (${detectedLang || getCurrentLanguageInfo().native})`}
+                  ? "Transcribing with Sarvam Saaras..."
+                  : `Transcribed (${detectedLang || "Auto"})`}
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -444,18 +496,6 @@ const Navbar = ({ onVoiceText }) => {
             {transcript}
           </div>
         </div>
-      )}
-
-      {/* Click outside to close language menu */}
-      {showLanguageMenu && (
-        <div
-          onClick={() => setShowLanguageMenu(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 999,
-          }}
-        />
       )}
 
       <style>{`

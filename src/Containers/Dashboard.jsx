@@ -1,486 +1,165 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  getDatabase,
-  ref,
-  set,
-  get,
-  child,
-  push,
-  update,
-} from "firebase/database";
-import { getAuth } from "firebase/auth";
-import Navbar from "../Components/Navbar";
+import React, { useState } from "react";
 import LineChart from "../Components/LineChart";
 import PieChar from "../Components/PieChar";
-import { app } from "../firebase";
-import { parseExpenseWithSarvam } from "../services/sarvam";
+import OnboardingModal from "../Components/OnboardingModal";
+import { useFinancialData } from "../context/FinancialDataContext";
+import { formatINR } from "../services/ragService";
 
 const Dashboard = () => {
-  const [voiceText, setVoiceText] = useState("");
-  const [expenses, setExpenses] = useState([]); // array of { category, amount, timestamp, description }
-  const [savings, setSavings] = useState([]);
-  const [spendings, setSpendings] = useState([]);
-  const [totalBalance, setTotalBalance] = useState(0);
-  const [processingVoice, setProcessingVoice] = useState(false);
-  const [recentTransactions, setRecentTransactions] = useState([]);
+  const financialData = useFinancialData();
+  const {
+    totalBalance,
+    categoryTotals,
+    recentTransactions,
+    totalSavingsAmount,
+    totalExpensesAmount,
+    totalSpendingsAmount,
+    totalSpendings,
+    resetFinancialData,
+    userProfile,
+    isOnboardingOpen,
+    setIsOnboardingOpen,
+  } = financialData;
 
-  // Category breakdown for expenses
-  const [categoryTotals, setCategoryTotals] = useState({
-    food: 0,
-    medical: 0,
-    education: 0,
-    others: 0,
-  });
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetFeedback, setResetFeedback] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
 
-  const auth = getAuth();
-  const user = auth.currentUser;
-  const handleReset = async () => {
-    if (!user) return;
-    const db = getDatabase(app);
+  const currentMonth = new Date().toLocaleString("default", { month: "long" });
 
-    try {
-      // Reset in Firebase
-      await set(ref(db, `users/${user.uid}`), {
-        totalBalance: 0,
-        categoryTotals: {
-          food: 0,
-          medical: 0,
-          education: 0,
-          others: 0,
-        },
-        transactions: {},
-        lastUpdated: new Date().toISOString(),
-      });
-
-      // Reset locally
-      setTotalBalance(0);
-      setCategoryTotals({ food: 0, medical: 0, education: 0, others: 0 });
-      setSavings([]);
-      setSpendings([]);
-      setExpenses([]);
-      setRecentTransactions([]);
-    } catch (err) {
-      console.error("Reset failed:", err);
+  const handleConfirmReset = async () => {
+    setIsResetting(true);
+    const ok = await resetFinancialData();
+    setIsResetting(false);
+    setShowResetModal(false);
+    if (ok) {
+      setResetFeedback("Progress & balance reset to ₹0! Live chart updated.");
+      setTimeout(() => setResetFeedback(""), 4000);
     }
   };
-  // Process and save transaction
-  const processTransaction = useCallback(
-    async (analysis, originalText, language) => {
-      const timestamp = new Date();
-      const newTransaction = {
-        id: Date.now() + Math.random(),
-        type: analysis.type,
-        category: analysis.category,
-        amount: analysis.amount,
-        description: analysis.description,
-        voiceTranscript: originalText,
-        languageDetected: language,
-        timestamp: timestamp.toISOString(),
-        confidence: analysis.confidence,
-      };
 
-      // Update local state based on transaction type
-      if (analysis.type === "savings") {
-        setSavings((prev) => [newTransaction, ...prev]);
-        // Add to total balance for savings
-        setTotalBalance((prev) => prev + analysis.amount);
-      } else if (analysis.type === "spending") {
-        setSpendings((prev) => [newTransaction, ...prev]);
-        // Deduct from total balance for spending
-        setTotalBalance((prev) => prev - analysis.amount);
-      } else if (analysis.type === "expense") {
-        setExpenses((prev) => [newTransaction, ...prev]);
-
-        // Update category totals
-        setCategoryTotals((prev) => ({
-          ...prev,
-          [analysis.category]: prev[analysis.category] + analysis.amount,
-        }));
-
-        // Deduct from total balance for expenses
-        setTotalBalance((prev) => prev - analysis.amount);
-      }
-
-      // Add to recent transactions
-      setRecentTransactions((prev) => [newTransaction, ...prev.slice(0, 9)]);
-
-      // Save to Firebase
-      if (user) {
-        const db = getDatabase(app);
-        // const userRef = ref(db, `users/${user.uid}`);
-
-        try {
-          // Save transaction
-          await push(ref(db, `users/${user.uid}/transactions`), newTransaction);
-
-          // Update totals
-          const updates = {};
-          updates[`totalBalance`] =
-            totalBalance +
-            (analysis.type === "savings" ? analysis.amount : -analysis.amount);
-
-          if (analysis.type === "expense") {
-            updates[`categoryTotals/${analysis.category}`] =
-              categoryTotals[analysis.category] + analysis.amount;
-          }
-
-          await update(ref(db, `users/${user.uid}`), {
-            totalBalance:
-              totalBalance +
-              (analysis.type === "savings"
-                ? analysis.amount
-                : -analysis.amount),
-
-            ...(analysis.type === "expense" && {
-              [`categoryTotals/${analysis.category}`]:
-                (categoryTotals[analysis.category] || 0) + analysis.amount,
-            }),
-
-            lastUpdated: timestamp.toISOString(),
-          });
-
-          console.log("Transaction saved successfully");
-        } catch (error) {
-          console.error("Error saving to Firebase:", error);
-        }
-      }
-    },
-    [user, categoryTotals, totalBalance]
-  );
-  // Fallback Keyword Analysis (if Sarvam AI is offline or returns empty)
-  const mockAIAnalysis = useCallback(async (text, language) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000)); // Simulate API call
-
-    const lowerText = text.toLowerCase();
-
-    // Multi-language keywords
-    const keywords = {
-      en: {
-        savings: [
-          "saved",
-          "deposit",
-          "bank",
-          "save",
-          "balance",
-          "savings",
-          "add money",
-          "put money",
-        ],
-        spending: ["spent", "bought", "purchased", "paid", "spend", "shopping"],
-        food: [
-          "food",
-          "restaurant",
-          "lunch",
-          "dinner",
-          "breakfast",
-          "meal",
-          "eating",
-          "cafe",
-          "snack",
-        ],
-        medical: [
-          "doctor",
-          "medicine",
-          "hospital",
-          "medical",
-          "health",
-          "clinic",
-          "pharmacy",
-        ],
-        education: [
-          "book",
-          "course",
-          "school",
-          "education",
-          "study",
-          "tuition",
-          "fees",
-          "college",
-        ],
-        others: [
-          "other",
-          "misc",
-          "general",
-          "utility",
-          "bill",
-          "rent",
-          "transport",
-        ],
-      },
-      hi: {
-        savings: ["बचत", "जमा", "सेव", "बैंक", "पैसे रखे", "पैसे बचाए"],
-        spending: ["खर्च", "खरीदा", "पैसे दिए", "लिया", "शॉपिंग"],
-        food: ["खाना", "भोजन", "रेस्टोरेंट", "लंच", "डिनर", "नाश्ता", "खाने"],
-        medical: ["डॉक्टर", "दवा", "अस्पताल", "इलाज", "क्लिनिक", "दवाई"],
-        education: ["किताब", "पढ़ाई", "स्कूल", "शिक्षा", "फीस", "कॉलेज"],
-        others: ["अन्य", "और", "बिल", "किराया", "यातायात"],
-      },
-      mr: {
-        savings: ["बचत", "जमा", "सेव्ह", "बँक", "पैसे ठेवले"],
-        spending: ["खर्च", "विकत घेतले", "पैसे दिले", "शॉपिंग"],
-        food: ["जेवण", "खाणे", "रेस्टॉरंट", "लंच", "डिनर"],
-        medical: ["डॉक्टर", "औषध", "हॉस्पिटल", "इलाज"],
-        education: ["पुस्तक", "अभ्यास", "शाळा", "शिक्षण"],
-        others: ["इतर", "अन्य", "बिल"],
-      },
-    };
-
-    // Extract amount using multiple patterns
-    const amountPatterns = [
-      /(\d+(?:\.\d+)?)\s*(?:rupees?|रुपये|रुपया|₹)/i,
-      /₹\s*(\d+(?:\.\d+)?)/,
-      /(\d+(?:\.\d+)?)\s*(?:rs|रु)/i,
-      /(\d+(?:\.\d+)?)/,
-    ];
-
-    let amount = 0;
-    for (const pattern of amountPatterns) {
-      const match = text.match(pattern);
-      if (match) {
-        amount = parseFloat(match[1]);
-        break;
-      }
-    }
-
-    if (amount === 0) return null;
-
-    const langKeywords = keywords[language] || keywords.en;
-
-    // Determine type and category
-    let type = "spending";
-    let category = "others";
-
-    // Check for savings first
-    if (langKeywords.savings.some((word) => lowerText.includes(word))) {
-      type = "savings";
-      category = null;
-    }
-    // Check for expense categories
-    else if (langKeywords.food.some((word) => lowerText.includes(word))) {
-      type = "expense";
-      category = "food";
-    } else if (langKeywords.medical.some((word) => lowerText.includes(word))) {
-      type = "expense";
-      category = "medical";
-    } else if (
-      langKeywords.education.some((word) => lowerText.includes(word))
-    ) {
-      type = "expense";
-      category = "education";
-    } else if (langKeywords.spending.some((word) => lowerText.includes(word))) {
-      type = "spending";
-      category = null;
-    } else {
-      type = "expense";
-      category = "others";
-    }
-
-    return {
-      type,
-      category,
-      amount,
-      description: text.trim(),
-      confidence: 0.85,
-    };
-  }, []);
-  // Sarvam AI Analysis Function for Voice Text
-  const analyzeVoiceText = useCallback(
-    async (text) => {
-      if (!text || text.trim() === "") return null;
-
-      setProcessingVoice(true);
-      console.log("Analyzing voice text with Sarvam AI:", text);
-
-      try {
-        // Detect language
-        const hindiPattern = /[\u0900-\u097F]/;
-        const marathiPattern = /[\u0900-\u097F]/; // Both use Devanagari script
-
-        let detectedLang = "en";
-        if (hindiPattern.test(text)) detectedLang = "hi";
-        if (marathiPattern.test(text)) detectedLang = "mr";
-
-        // Try Sarvam AI Parsing first
-        let result = await parseExpenseWithSarvam(text);
-
-        // Fallback to keyword matching if AI fails or returns no amount
-        if (!result || !result.amount) {
-          result = await mockAIAnalysis(text, detectedLang);
-        }
-
-        if (result && result.amount > 0) {
-          await processTransaction(result, text, detectedLang);
-        }
-      } catch (error) {
-        console.error("Error analyzing voice text:", error);
-      } finally {
-        setProcessingVoice(false);
-      }
-    },
-    [mockAIAnalysis, processTransaction]
-  );
-
-  // Load data from Firebase on component mount
-  useEffect(() => {
-    if (user) {
-      const db = getDatabase(app);
-      const dbRef = ref(db);
-
-      // Fetch all user data
-      get(child(dbRef, `users/${user.uid}`)).then((snapshot) => {
-        if (snapshot.exists()) {
-          const userData = snapshot.val();
-
-          // Total Balance → local state
-          setTotalBalance(userData.totalBalance ?? 58000);
-
-          // Category Totals → local state
-          if (userData.categoryTotals) {
-            setCategoryTotals(userData.categoryTotals);
-          }
-
-          // Savings history (optional sync)
-          if (userData.transactions) {
-            const transactionsList = Object.values(userData.transactions);
-            setSavings(transactionsList.filter((t) => t.type === "savings"));
-            setSpendings(transactionsList.filter((t) => t.type === "spending"));
-            setExpenses(transactionsList.filter((t) => t.type === "expense"));
-          }
-        } else {
-          // Initialize
-          setTotalBalance(58000);
-          set(ref(db, `users/${user.uid}/totalBalance`), 58000);
-        }
-      });
-    }
-  }, [user]);
-  const lastVoiceRef = useRef("");
-  useEffect(() => {
-    if (
-      voiceText &&
-      voiceText.trim() !== "" &&
-      voiceText !== lastVoiceRef.current
-    ) {
-      lastVoiceRef.current = voiceText;
-      analyzeVoiceText(voiceText);
-    }
-  }, [voiceText, analyzeVoiceText]);
-
-  const totalSavingsAmount = savings.reduce((t, s) => t + s.amount, 0);
-  const totalSpendingsAmount = spendings.reduce((t, s) => t + s.amount, 0);
-  const totalExpensesAmount = expenses.reduce((t, e) => t + e.amount, 0);
-  const totalSpendings = totalSpendingsAmount + totalExpensesAmount;
+  // Expenses formatted for PieChart
+  const pieExpenses = Object.entries(categoryTotals).map(([cat, val]) => ({
+    name: cat,
+    category: cat,
+    value: val,
+  }));
 
   return (
-    <div className="conte">
-      <Navbar onVoiceText={setVoiceText} />
-
-      {/* Voice Processing Indicator */}
-      {processingVoice && (
+    <div className="conte" style={{ paddingBottom: "100px" }}>
+      {/* Onboarding Banner if not completed */}
+      {!userProfile?.onboardingCompleted && (
         <div
-          className="voice-processing"
           style={{
-            position: "fixed",
-            top: "20px",
-            right: "20px",
-            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            color: "white",
-            padding: "12px 20px",
-            borderRadius: "25px",
-            zIndex: 1000,
+            background: "linear-gradient(135deg, #e0e7ff 0%, #ede9fe 100%)",
+            borderRadius: "16px",
+            padding: "14px 18px",
+            marginBottom: "16px",
             display: "flex",
+            justifyContent: "space-between",
             alignItems: "center",
+            flexWrap: "wrap",
             gap: "10px",
-            fontSize: "14px",
-            fontWeight: "500",
-            boxShadow: "0 8px 32px rgba(102, 126, 234, 0.4)",
+            border: "1px solid #c7d2fe",
+            boxShadow: "0 4px 12px rgba(99, 102, 241, 0.1)",
           }}
         >
-          <div
+          <div>
+            <div style={{ fontWeight: 700, color: "#3730a3", fontSize: "14px" }}>
+              ✨ Complete Your Profile & Starting Balance
+            </div>
+            <div style={{ color: "#4f46e5", fontSize: "12px", marginTop: "2px" }}>
+              Configure your baseline funds, avatar, and first savings goal.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsOnboardingOpen(true)}
             style={{
-              width: "16px",
-              height: "16px",
-              border: "2px solid transparent",
-              borderTop: "2px solid white",
-              borderRadius: "50%",
-              animation: "spin 1s linear infinite",
+              background: "#4f46e5",
+              color: "#fff",
+              border: "none",
+              padding: "8px 16px",
+              borderRadius: "12px",
+              fontWeight: 600,
+              fontSize: "12px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+              boxShadow: "0 2px 8px rgba(79, 70, 229, 0.3)",
             }}
-          ></div>
-          Processing voice input...
+          >
+            Start Setup →
+          </button>
         </div>
       )}
 
-      {/* Current Voice Text Display */}
-      {voiceText && (
+      {/* Reset Feedback Notification */}
+      {resetFeedback && (
         <div
-          className="voice-text-display"
           style={{
-            background: "#f0f9ff",
-            border: "2px solid #0ea5e9",
+            backgroundColor: "#dcfce7",
+            color: "#15803d",
+            padding: "10px 16px",
             borderRadius: "12px",
-            padding: "16px",
-            margin: "20px",
-            fontSize: "14px",
-            color: "#0c4a6e",
+            fontSize: "13px",
+            fontWeight: 600,
+            marginBottom: "16px",
+            border: "1px solid #86efac",
+            textAlign: "center",
+            boxShadow: "0 2px 8px rgba(22, 163, 74, 0.15)",
           }}
         >
-          <strong>Voice Input:</strong> {voiceText}
+          ✓ {resetFeedback}
         </div>
       )}
 
+      {/* Main Balances */}
       <div className="DashStart">
         <div className="dashc">
           <p>Total Balance</p>
-          <h1>₹ {totalBalance.toLocaleString()}</h1>
+          <h1>{formatINR(totalBalance)}</h1>
           <div style={{ fontSize: "12px", color: "#666", marginTop: "8px" }}>
-            Savings: ₹{totalSavingsAmount.toLocaleString()} | Spent: ₹
-            {totalSpendings.toLocaleString()}
+            Savings: {formatINR(totalSavingsAmount)} | Spent: {formatINR(totalSpendings)}
           </div>
         </div>
         <div className="spending">
           <p>Total Spendings</p>
-          <h1>₹ {totalSpendings.toLocaleString()}</h1>
+          <h1>{formatINR(totalSpendings)}</h1>
           <div style={{ fontSize: "12px", color: "#666", marginTop: "8px" }}>
-            Regular: ₹{totalSpendingsAmount.toLocaleString()}
+            Categorized: {formatINR(totalExpensesAmount)} | General: {formatINR(totalSpendingsAmount)}
           </div>
         </div>
       </div>
-      <div className="lineChar">
+
+      {/* Cash Flow Visuals (tracks live balance) */}
+      <div className="lineChar" style={{ position: "relative" }}>
         <div className="ldiv"></div>
-        <h5>August Savings</h5>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 4px" }}>
+          <h5>{currentMonth} Balance Trend</h5>
+        </div>
         <LineChart />
       </div>
-      {/* Category Breakdown */}
+
+      {/* Category Breakdown Pie Chart */}
       <div className="Piechar">
-        <PieChar
-          expenses={expenses.map((e) => ({
-            name: e.category,
-            value: e.amount,
-            category: e.category,
-          }))}
-          categoryTotals={categoryTotals}
-        />
+        <PieChar expenses={pieExpenses} categoryTotals={categoryTotals} />
       </div>
+
+      {/* Category Breakdown Cards */}
       <div
         className="category-breakdown"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
           gap: "16px",
-          margin: "20px",
+          margin: "20px 0",
           padding: "20px",
           backgroundColor: "white",
           borderRadius: "16px",
           boxShadow: "0 4px 6px rgba(0, 0, 0, 0.05)",
         }}
       >
-        <h3
-          style={{
-            gridColumn: "1 / -1",
-            margin: "0 0 16px 0",
-            color: "#374151",
-          }}
-        >
+        <h3 style={{ gridColumn: "1 / -1", margin: "0 0 16px 0", color: "#374151" }}>
           Expense Categories
         </h3>
         {Object.entries(categoryTotals).map(([category, amount]) => (
@@ -502,130 +181,230 @@ const Dashboard = () => {
             >
               {category}
             </div>
-            <div
-              style={{ fontSize: "16px", fontWeight: "600", color: "#1f2937" }}
-            >
-              ₹{amount.toLocaleString()}
+            <div style={{ fontSize: "16px", fontWeight: "600", color: "#1f2937" }}>
+              {formatINR(amount)}
             </div>
           </div>
         ))}
       </div>
 
-      <div style={{ margin: "20px", textAlign: "center" }}>
+      {/* Reset Progress Button */}
+      <div style={{ margin: "24px 20px", textAlign: "center" }}>
         <button
-          onClick={handleReset}
+          type="button"
+          onClick={() => setShowResetModal(true)}
           style={{
-            background: "black",
+            background: "#000000",
             color: "white",
-            padding: "12px 24px",
-            borderRadius: "12px",
-            fontWeight: "600",
+            padding: "13px 28px",
+            borderRadius: "14px",
+            fontWeight: "700",
+            fontSize: "14px",
             border: "none",
             cursor: "pointer",
-            boxShadow: "0 4px 14px rgba(239, 68, 68, 0.4)",
+            boxShadow: "0 4px 14px rgba(0, 0, 0, 0.25)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            transition: "all 0.2s ease",
           }}
         >
-          Reset Progress
+          <span>↺</span> Reset Progress & Balance
         </button>
+        <div style={{ fontSize: "11px", color: "#9ca3af", marginTop: "6px" }}>
+          Resets balance to ₹0 and clears transactions (Profile preserved)
+        </div>
       </div>
+
+      {/* Confirmation Modal for Reset Progress */}
+      {showResetModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.65)",
+            backdropFilter: "blur(6px)",
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: "#ffffff",
+              borderRadius: "20px",
+              padding: "24px",
+              maxWidth: "420px",
+              width: "100%",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.3)",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "50%",
+                backgroundColor: "#fee2e2",
+                color: "#dc2626",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "24px",
+                margin: "0 auto 14px",
+              }}
+            >
+              ⚠️
+            </div>
+            <h3 style={{ margin: "0 0 8px 0", fontSize: "18px", color: "#111827", fontWeight: 700 }}>
+              Reset Balance & Progress?
+            </h3>
+            <p style={{ margin: "0 0 20px 0", fontSize: "13px", color: "#6b7280", lineHeight: 1.5 }}>
+              This will reset your <strong>Total Balance to ₹0</strong> and clear all transaction logs.
+              The balance chart will immediately reset to ₹0.
+              <br />
+              <span style={{ color: "#16a34a", fontWeight: 600, display: "inline-block", marginTop: "6px" }}>
+                ✓ Your profile details (Name, PAN, Aadhaar) will be preserved.
+              </span>
+            </p>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+              <button
+                type="button"
+                onClick={() => setShowResetModal(false)}
+                disabled={isResetting}
+                style={{
+                  flex: 1,
+                  padding: "10px 16px",
+                  borderRadius: "12px",
+                  border: "1.5px solid #d1d5db",
+                  background: "#fff",
+                  color: "#374151",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReset}
+                disabled={isResetting}
+                style={{
+                  flex: 1,
+                  padding: "10px 16px",
+                  borderRadius: "12px",
+                  border: "none",
+                  background: "#dc2626",
+                  color: "#fff",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  cursor: isResetting ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 12px rgba(220, 38, 38, 0.3)",
+                }}
+              >
+                {isResetting ? "Resetting..." : "Yes, Reset to ₹0"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Smooth Onboarding Modal */}
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        onClose={() => setIsOnboardingOpen(false)}
+      />
 
       {/* Recent Transactions */}
       <div
         className="recent-transactions"
         style={{
-          margin: "20px",
+          margin: "20px 0",
           padding: "20px",
           backgroundColor: "white",
           borderRadius: "16px",
           boxShadow: "0 4px 6px rgba(0, 0, 0, 0.05)",
         }}
       >
-        <h3 style={{ margin: "0 0 16px 0", color: "#374151" }}>
-          Recent Transactions
-        </h3>
+        <h3 style={{ margin: "0 0 16px 0", color: "#374151" }}>Recent Transactions</h3>
         {recentTransactions.length === 0 ? (
           <p style={{ color: "#6b7280", textAlign: "center", padding: "20px" }}>
-            No transactions yet. Try saying something like:
+            No transactions yet. Try speaking:
             <br />
-            "I spent 500 rupees on food" or "मैंने खाने पर 500 रुपये खर्च किए"
+            "Spent 450 rupees on dinner" or "दवाइयों के लिए 300 रुपये खर्च किए"
           </p>
         ) : (
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "12px" }}
-          >
-            {recentTransactions.map((transaction) => (
-              <div
-                key={transaction.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px",
-                  backgroundColor: "#f8fafc",
-                  borderRadius: "8px",
-                  borderLeft: `4px solid ${
-                    transaction.type === "savings"
-                      ? "#10b981"
-                      : transaction.type === "spending"
-                      ? "#3b82f6"
-                      : "#ef4444"
-                  }`,
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontWeight: "500",
-                      color: "#1f2937",
-                      fontSize: "14px",
-                    }}
-                  >
-                    {transaction.description}
-                  </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            {recentTransactions.map((transaction) => {
+              const isPositive =
+                transaction.type === "savings" ||
+                transaction.type === "income" ||
+                transaction.type === "earnings" ||
+                transaction.direction === "inflow";
 
-                  <div
-                    style={{
-                      fontSize: "12px",
-                      color: "#6b7280",
-                      marginTop: "4px",
-                    }}
-                  >
-                    {transaction.type}
-                    {transaction.category && ` • ${transaction.category}`}
-                    {transaction.languageDetected &&
-                      ` • ${transaction.languageDetected.toUpperCase()}`}
-                    {transaction.confidence &&
-                      ` • ${Math.round(
-                        transaction.confidence * 100
-                      )}% confident`}
-                  </div>
-                </div>
+              return (
                 <div
+                  key={transaction.id}
                   style={{
-                    fontWeight: "600",
-                    color:
-                      transaction.type === "savings" ? "#10b981" : "#ef4444",
-                    fontSize: "16px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px",
+                    backgroundColor: "#f8fafc",
+                    borderRadius: "8px",
+                    borderLeft: `4px solid ${
+                      isPositive
+                        ? "#10b981"
+                        : transaction.type === "spending"
+                        ? "#3b82f6"
+                        : "#ef4444"
+                    }`,
                   }}
                 >
-                  {transaction.type === "savings" ? "+" : "-"}₹
-                  {transaction.amount.toLocaleString()}
+                  <div>
+                    <div style={{ fontWeight: "500", color: "#1f2937", fontSize: "14px" }}>
+                      {transaction.description}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#6b7280", marginTop: "4px" }}>
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          color: isPositive ? "#059669" : "#6b7280",
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        {transaction.type}
+                      </span>
+                      {transaction.category && ` • ${transaction.category}`}
+                      {transaction.languageDetected &&
+                        ` • ${transaction.languageDetected.toUpperCase()}`}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontWeight: "700",
+                      color: isPositive ? "#10b981" : "#ef4444",
+                      fontSize: "16px",
+                    }}
+                  >
+                    {isPositive ? "+" : "-"}
+                    {formatINR(transaction.amount)}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Add CSS for spin animation */}
+      {/* CSS Spin Animation */}
       <style>{`
         @keyframes spin {
-          0% {
-            transform: rotate(0deg);
-          }
-          100% {
-            transform: rotate(360deg);
-          }
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
         }
       `}</style>
     </div>

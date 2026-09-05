@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   getFirestore,
   collection,
@@ -9,39 +9,48 @@ import {
   limitToLast,
   serverTimestamp,
 } from "firebase/firestore";
-import { IoCallSharp } from "react-icons/io5";
-import { MdKeyboardVoice, MdStop } from "react-icons/md";
+import {
+  MdKeyboardVoice,
+  MdSend,
+  MdAutoAwesome,
+  MdFlag,
+  MdAccountBalanceWallet,
+} from "react-icons/md";
 import { app } from "../firebase";
 import { useUser } from "../UserContext";
+import { useFinancialData } from "../context/FinancialDataContext";
 import ReactMarkdown from "react-markdown";
-import { chatCompletion, transcribeAudio } from "../services/sarvam";
-
-const SYSTEM_PROMPT = `You are FinVoice, an expert AI financial assistant powered by Sarvam AI. 
-⚡ Always provide **clear, concise, and actionable financial advice** (budgeting, expense tracking, savings, investments, debt management).  
-❌ If a question is unrelated to finance, politely steer the user back to personal finance.  
-Keep tone: friendly, professional, helpful.
-
-📏 Keep your responses structured, helpful, concise, and easy to read. You can understand English, Hindi, and Marathi financial questions.`;
+import { transcribeAudio } from "../services/sarvam";
+import { askFinVoiceAssistant, formatINR } from "../services/ragService";
 
 const Chat = () => {
   const { user } = useUser();
+  const financialData = useFinancialData();
+  const { totalBalance = 0, goals = [], userProfile = {} } = financialData;
+
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Push-To-Talk (PTT) Voice States
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [recordDuration, setRecordDuration] = useState(0);
+  const [pttHint, setPttHint] = useState("");
+
   const db = getFirestore(app);
   const messagesEndRef = useRef(null);
 
-  // Audio recording refs
+  // PTT audio recording references
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const streamRef = useRef(null);
+  const isHoldingRef = useRef(false);
+  const pressStartTimeRef = useRef(0);
+  const durationTimerRef = useRef(null);
+  const hintTimeoutRef = useRef(null);
 
-  const handleCall = () => {
-    window.location.href = "https://assista.pages.dev/";
-  };
-
-  // Listen to chat history
+  // Listen to Firestore chat history
   useEffect(() => {
     if (!user) return;
     const q = query(
@@ -55,316 +64,599 @@ const Chat = () => {
     return () => unsub();
   }, [user, db]);
 
-  // Auto scroll
+  // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, loading]);
 
-  // Voice recording for chat using Sarvam AI Speech-to-Text
-  const startRecording = async () => {
+  // Clean up timers and audio on unmount
+  useEffect(() => {
+    return () => {
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+  // Show a temporary user-friendly PTT hint
+  const triggerHint = (msg) => {
+    setPttHint(msg);
+    if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
+    hintTimeoutRef.current = setTimeout(() => {
+      setPttHint("");
+    }, 3500);
+  };
+
+  // Send message using live RAG engine
+  const executeSendMessage = useCallback(
+    async (text) => {
+      const queryToSend = (text || "").trim();
+      if (!queryToSend || !user || loading) return;
+
+      setLoading(true);
+      setInput("");
+
+      // 1. Save user message to Firestore
+      const userMsg = {
+        sender: "user",
+        text: queryToSend,
+        createdAt: serverTimestamp(),
+      };
+      try {
+        await addDoc(collection(db, "chats", user.uid, "threads"), userMsg);
+      } catch (err) {
+        console.error("Failed to save user chat to Firestore:", err);
+      }
+
+      let botText =
+        "Sorry, I couldn't process your request. Please ask about finances.";
+      let sourcesUsed = [];
+      let detectedIntent = "GENERAL_ADVISORY";
+
+      try {
+        // 2. Call RAG Assistant with live Dashboard, Transactions & Goals
+        const ragResult = await askFinVoiceAssistant({
+          query: queryToSend,
+          history: messages.slice(-8),
+          financialData,
+          userProfile,
+          languageCode: "unknown",
+        });
+
+        if (ragResult?.reply) {
+          botText = ragResult.reply.trim();
+          sourcesUsed = ragResult.sourcesUsed || [];
+          detectedIntent = ragResult.intent || "GENERAL_ADVISORY";
+        }
+      } catch (error) {
+        console.error("RAG Chat error:", error);
+        botText = `⚠️ FinVoice AI service temporary error: ${
+          error.message || "Please try again shortly."
+        }`;
+      }
+
+      // 3. Save grounded bot message to Firestore
+      try {
+        await addDoc(collection(db, "chats", user.uid, "threads"), {
+          sender: "bot",
+          text: botText,
+          sourcesUsed,
+          intent: detectedIntent,
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.error("Failed to save bot response to Firestore:", err);
+      }
+
+      setLoading(false);
+    },
+    [user, loading, db, messages, financialData, userProfile]
+  );
+
+  const handleFormSubmit = (e) => {
+    e?.preventDefault();
+    executeSendMessage(input);
+  };
+
+  // -------------------------------------------------------------
+  // Push-To-Talk (PTT) Engine: Hold to Speak, Release to Send
+  // -------------------------------------------------------------
+
+  const startPttRecording = async () => {
+    if (loading || isTranscribing) return;
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      isHoldingRef.current = true;
+      pressStartTimeRef.current = Date.now();
       audioChunksRef.current = [];
+      setRecordDuration(0);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+
+      // If user already released before getUserMedia resolved
+      if (!isHoldingRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
         }
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop());
+        // Stop audio tracks
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+
+        const durationMs = Date.now() - pressStartTimeRef.current;
+
+        // If held for less than 350ms, treat as accidental click/tap
+        if (durationMs < 350) {
+          triggerHint("Hold the mic button to speak, release to send!");
+          setIsRecording(false);
+          return;
+        }
+
         const audioBlob = new Blob(audioChunksRef.current, {
           type: "audio/webm",
         });
 
-        if (audioBlob.size > 0) {
+        if (audioBlob.size > 500) {
           setIsTranscribing(true);
           try {
-            const result = await transcribeAudio(audioBlob, {
+            const res = await transcribeAudio(audioBlob, {
               languageCode: "unknown",
+              model: "saaras:v3",
             });
-            if (result.transcript) {
-              setInput((prev) =>
-                prev ? `${prev} ${result.transcript}` : result.transcript
-              );
+
+            if (res.transcript && res.transcript.trim()) {
+              const transcribedText = res.transcript.trim();
+              setInput(transcribedText);
+              // Directly submit transcribed voice query to RAG assistant
+              await executeSendMessage(transcribedText);
+            } else {
+              triggerHint("Couldn't hear clearly. Please hold and speak again.");
             }
-          } catch (err) {
-            console.error("Sarvam Voice transcription error:", err);
-            alert("Could not transcribe speech: " + err.message);
+          } catch (sttErr) {
+            console.error("PTT STT Error:", sttErr);
+            triggerHint("Transcription failed. Please check microphone.");
           } finally {
             setIsTranscribing(false);
           }
+        } else {
+          triggerHint("Audio too short. Hold and speak clearly.");
         }
+
+        setIsRecording(false);
       };
 
       mediaRecorder.start();
       setIsRecording(true);
+
+      // Duration counter
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      durationTimerRef.current = setInterval(() => {
+        setRecordDuration((prev) => +(prev + 0.1).toFixed(1));
+      }, 100);
     } catch (err) {
       console.error("Microphone access error:", err);
-      alert("Microphone access is required for voice input.");
+      isHoldingRef.current = false;
+      setIsRecording(false);
+      triggerHint("Microphone permission needed for Push-To-Talk.");
     }
   };
 
-  const stopRecording = () => {
+  const stopPttRecording = () => {
+    isHoldingRef.current = false;
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== "inactive"
     ) {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
-  };
-
-  const toggleVoice = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
-  // Send message
-  const sendMessage = async (e) => {
-    e?.preventDefault();
-    if (!input.trim() || !user || loading) return;
-
-    setLoading(true);
-    const userInput = input.trim();
-    setInput(""); // Clear input immediately
-
-    // Save user msg
-    const userMsg = {
-      sender: "user",
-      text: userInput,
-      createdAt: serverTimestamp(),
-    };
-    await addDoc(collection(db, "chats", user.uid, "threads"), userMsg);
-
-    // Build conversation history for Sarvam AI Chat Completion (OpenAI compatible format)
-    const formattedHistory = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...messages.slice(-10).map((m) => ({
-        role: m.sender === "user" ? "user" : "assistant",
-        content: m.text,
-      })),
-      { role: "user", content: userInput },
-    ];
-
-    let botText =
-      "Sorry, I couldn't process your request. Please ask about finances.";
-
-    try {
-      const response = await chatCompletion(formattedHistory, {
-        model: "sarvam-105b",
-        temperature: 0.7,
-      });
-
-      if (response && response.trim()) {
-        botText = response.trim();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.warn("PTT stop error:", e);
       }
-    } catch (error) {
-      console.error("Error contacting Sarvam AI:", error);
-      botText =
-        `⚠️ Error contacting Sarvam AI: ${error.message || "Please check your API key."}`;
+    } else {
+      setIsRecording(false);
     }
-
-    // Save bot msg
-    await addDoc(collection(db, "chats", user.uid, "threads"), {
-      sender: "bot",
-      text: botText,
-      createdAt: serverTimestamp(),
-    });
-
-    setLoading(false);
   };
+
+  // Pointer event handlers for Push-To-Talk
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.debug("Pointer capture fallback:", err);
+    }
+    startPttRecording();
+  };
+
+  const handlePointerUp = (e) => {
+    e.preventDefault();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      console.debug("Pointer release fallback:", err);
+    }
+    stopPttRecording();
+  };
+
+  const handlePointerCancel = () => {
+    stopPttRecording();
+  };
+
+  // Quick suggestion chips based on real user data
+  const suggestionChips = [
+    {
+      label: "meri medical emergency kitne ki hai ??",
+      icon: <MdFlag />,
+    },
+    {
+      label: "Mera total balance aur financial health kya hai?",
+      icon: <MdAccountBalanceWallet />,
+    },
+    {
+      label: "Mere active goals ka kya status hai?",
+      icon: <MdAutoAwesome />,
+    },
+    {
+      label: "Mera sabse bada kharcha kis category me hai?",
+      icon: <MdFlag />,
+    },
+  ];
 
   return (
     <div
       className="chatcont"
-      style={{ maxWidth: 600, margin: "0 auto", padding: 16 }}
+      style={{
+        maxWidth: 720,
+        margin: "0 auto",
+        padding: "16px 16px 24px 16px",
+      }}
     >
+      {/* Title & Live RAG Grounding Indicator */}
       <div
-        className="finchat"
         style={{
-          fontWeight: 900,
-          fontSize: 24,
-          marginBottom: 12,
           display: "flex",
-          justifyContent: "space-between",
+          flexDirection: "column",
           alignItems: "center",
+          gap: 6,
+          marginBottom: 14,
         }}
       >
-        <span>FINVOICE CHAT</span>
-        <span
+        <div
+          className="finchat"
           style={{
-            fontSize: "11px",
-            background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-            color: "#fff",
-            padding: "4px 10px",
-            borderRadius: "12px",
-            fontWeight: 600,
-            letterSpacing: "0.5px",
+            fontWeight: 900,
+            fontSize: 24,
+            letterSpacing: "-0.02em",
+            color: "#1e1b4b",
           }}
         >
-          Powered by Sarvam AI
-        </span>
+          FINVOICE AI CHAT
+        </div>
+
+        {/* Live RAG Status Badge */}
+        <div className="rag-header-badge" title="RAG connected to live Firebase database">
+          <span className="rag-pulse-dot" />
+          <span>
+            Live RAG Connected • <strong>{formatINR(totalBalance)}</strong> Balance •{" "}
+            <strong>{goals.length}</strong> Goals Tracked
+          </span>
+        </div>
       </div>
+
+      {/* Suggestion Chips */}
       <div
         style={{
-          background: "#f7f7f7",
-          borderRadius: "3rem",
-          padding: 16,
-          minHeight: 350,
-          maxHeight: "32.5rem",
+          display: "flex",
+          gap: 8,
+          overflowX: "auto",
+          width: "100%",
+          padding: "4px 2px 10px 2px",
+          scrollbarWidth: "none",
+        }}
+      >
+        {/* {suggestionChips.map((chip, idx) => (
+          <button
+            key={idx}
+            type="button"
+            className="rag-suggestion-chip"
+            onClick={() => executeSendMessage(chip.label)}
+            disabled={loading || isRecording}
+          >
+            {chip.icon}
+            <span>{chip.label}</span>
+          </button>
+        ))} */}
+      </div>
+
+      {/* Chat Messages Stream */}
+      <div
+        style={{
+          width: "100%",
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          borderRadius: "1.75rem",
+          padding: 20,
+          minHeight: 360,
+          maxHeight: "34rem",
           overflowY: "auto",
-          marginBottom: 16,
+          marginBottom: 12,
+          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.02)",
         }}
       >
         {messages.length === 0 && (
           <div
-            style={{ textAlign: "center", color: "#666", fontStyle: "italic" }}
+            style={{
+              textAlign: "center",
+              color: "#64748b",
+              padding: "40px 16px",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 8,
+            }}
           >
-            Ask me anything about personal finance in English, Hindi, or Marathi!
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: "50%",
+                background: "#e0e7ff",
+                color: "#4f46e5",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 22,
+              }}
+            >
+              <MdAutoAwesome />
+            </div>
+            <div style={{ fontWeight: 700, color: "#1e293b", fontSize: 16 }}>
+              FinVoice RAG Assistant is Ready
+            </div>
+            <div style={{ fontSize: 13.5, maxWidth: 420, lineHeight: 1.5 }}>
+              Ask anything about your live balance, medical emergency funds,
+              spending categories, or milestone targets in English or Indic languages!
+            </div>
           </div>
         )}
+
         {messages.map((msg, i) => (
           <div
             key={i}
             style={{
               textAlign: msg.sender === "user" ? "right" : "left",
-              margin: "6% 0",
+              margin: "14px 0",
             }}
           >
-            <span
+            <div
               style={{
                 display: "inline-block",
                 background:
                   msg.sender === "user"
-                    ? "linear-gradient(45deg, #6e5ad0, rgba(169, 18, 215, 0.77))"
-                    : "#e2e3e5",
-                color: msg.sender === "user" ? "#fff" : "#000",
-                letterSpacing: msg.sender === "user" ? "0.01em" : 0,
-                borderRadius: 16,
-                padding: "8px 25px",
+                    ? "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)"
+                    : "#ffffff",
+                color: msg.sender === "user" ? "#ffffff" : "#1e293b",
+                border:
+                  msg.sender === "user" ? "none" : "1px solid #e2e8f0",
+                boxShadow:
+                  msg.sender === "user"
+                    ? "0 4px 12px rgba(99, 102, 241, 0.25)"
+                    : "0 2px 8px rgba(0, 0, 0, 0.04)",
+                borderRadius:
+                  msg.sender === "user"
+                    ? "18px 18px 4px 18px"
+                    : "18px 18px 18px 4px",
+                padding: "10px 18px",
                 maxWidth: "88%",
-                lineHeight: "155%",
+                lineHeight: 1.6,
                 wordBreak: "break-word",
+                textAlign: "left",
               }}
             >
               <ReactMarkdown>{msg.text}</ReactMarkdown>
-            </span>
+
+              {/* RAG Verification stamp on assistant responses */}
+              {msg.sender === "bot" && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    paddingTop: 6,
+                    borderTop: "1px solid #f1f5f9",
+                    fontSize: "11px",
+                    color: "#6366f1",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    fontWeight: 600,
+                  }}
+                >
+                  <MdAutoAwesome style={{ fontSize: 13 }} />
+                  <span>Verified with live Dashboard & Goals RAG</span>
+                </div>
+              )}
+            </div>
           </div>
         ))}
+
         {loading && (
-          <div style={{ textAlign: "left", margin: "8px 0" }}>
-            <span
+          <div style={{ textAlign: "left", margin: "10px 0" }}>
+            <div
               style={{
-                display: "inline-block",
-                background: "#e2e3e5",
-                color: "#666",
-                borderRadius: 16,
-                padding: "8px 14px",
-                fontStyle: "italic",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#ffffff",
+                border: "1px solid #e2e8f0",
+                borderRadius: 18,
+                padding: "10px 16px",
+                color: "#6366f1",
+                fontSize: 13.5,
+                fontWeight: 600,
               }}
             >
-              Sarvam AI is thinking...
-            </span>
+              <span className="rag-pulse-dot" />
+              FinVoice RAG is analyzing your financial records...
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Push-To-Talk Status Bar */}
+      <div
+        className={`ptt-status-bar ${
+          isRecording ? "recording" : isTranscribing ? "transcribing" : "idle"
+        }`}
+      >
+        {isRecording ? (
+          <>
+            <span
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: "#ef4444",
+                display: "inline-block",
+              }}
+            />
+            <span>
+              🔴 Recording ({recordDuration}s) • <strong>Release to send</strong>
+            </span>
+          </>
+        ) : isTranscribing ? (
+          <>
+            <MdAutoAwesome />
+            <span>⚡ Transcribing speech with Sarvam AI...</span>
+          </>
+        ) : pttHint ? (
+          <span>{pttHint}</span>
+        ) : (
+          <span>🎙️ Push to Talk: Hold mic to speak, release to send</span>
+        )}
+      </div>
+
+      {/* Input & Voice Controls */}
       <form
-        onSubmit={sendMessage}
+        onSubmit={handleFormSubmit}
         style={{
           display: "flex",
           flexDirection: "row",
-          justifyContent: "center",
           alignItems: "center",
-          gap: 8,
+          gap: 10,
+          width: "100%",
         }}
       >
+        {/* Push-To-Talk (PTT) Mic Button */}
         <button
           type="button"
-          className="ccall"
-          onClick={() => handleCall()}
-          title="Assista Call"
-        >
-          <IoCallSharp />
-        </button>
-
-        {/* Sarvam Speech Recognition Mic Button */}
-        <button
-          type="button"
-          onClick={toggleVoice}
-          title={isRecording ? "Stop Recording" : "Speak with Sarvam AI"}
-          style={{
-            background: isRecording
-              ? "#ef4444"
-              : isTranscribing
-              ? "#f59e0b"
-              : "#4f46e5",
-            color: "#fff",
-            border: "none",
-            borderRadius: "50%",
-            width: "42px",
-            height: "42px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "20px",
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-            boxShadow: isRecording ? "0 0 12px rgba(239, 68, 68, 0.6)" : "none",
+          aria-label="Push to Talk"
+          title="Push to Talk: Hold to speak, release to send"
+          className={`ptt-mic-btn ${
+            isRecording ? "recording" : isTranscribing ? "transcribing" : ""
+          }`}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+          onKeyDown={(e) => {
+            if ((e.key === " " || e.key === "Enter") && !isRecording) {
+              e.preventDefault();
+              startPttRecording();
+            }
           }}
+          onKeyUp={(e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              stopPttRecording();
+            }
+          }}
+          disabled={loading || isTranscribing}
         >
-          {isRecording ? <MdStop /> : <MdKeyboardVoice />}
+          <MdKeyboardVoice />
         </button>
 
+        {/* Text Input */}
         <input
           type="text"
           value={input}
-          disabled={loading || isTranscribing}
+          disabled={loading || isTranscribing || isRecording}
           onChange={(e) => setInput(e.target.value)}
           placeholder={
             isRecording
-              ? "Listening..."
+              ? "Listening... Release to send"
               : isTranscribing
               ? "Transcribing with Sarvam AI..."
-              : "Ask about budget, savings..."
+              : "Ask about medical emergency, balance, goals..."
           }
           style={{
             flex: 1,
-            padding: 10,
-            borderRadius: 8,
-            border: "1px solid #ccc",
-            fontSize: 16,
+            padding: "12px 16px",
+            borderRadius: "12px",
+            border: "1px solid #cbd5e1",
+            fontSize: 15,
             outline: "none",
-            width: "100%",
+            backgroundColor: isRecording ? "#fff5f5" : "#ffffff",
+            transition: "all 0.2s ease",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.03)",
           }}
         />
+
+        {/* Send Button */}
         <button
           type="submit"
-          disabled={loading || !input.trim() || isTranscribing}
+          disabled={loading || !input.trim() || isTranscribing || isRecording}
           style={{
-            padding: "0 6%",
-            borderRadius: 8,
+            padding: "0 20px",
+            borderRadius: "12px",
             border: "none",
             background:
-              loading || !input.trim() || isTranscribing ? "#ccc" : "#000",
-            color: "#fff",
-            fontWeight: 600,
-            fontSize: 16,
-            height: "42px",
+              loading || !input.trim() || isTranscribing || isRecording
+                ? "#e2e8f0"
+                : "linear-gradient(135deg, #1e1b4b 0%, #312e81 100%)",
+            color:
+              loading || !input.trim() || isTranscribing || isRecording
+                ? "#94a3b8"
+                : "#ffffff",
+            fontWeight: 700,
+            fontSize: 14.5,
+            height: "48px",
+            flexShrink: 0,
             cursor:
-              loading || !input.trim() || isTranscribing
+              loading || !input.trim() || isTranscribing || isRecording
                 ? "not-allowed"
                 : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            boxShadow:
+              !loading && input.trim()
+                ? "0 4px 12px rgba(30, 27, 75, 0.25)"
+                : "none",
+            transition: "all 0.2s ease",
           }}
         >
-          {loading ? "..." : "Send"}
+          <MdSend />
         </button>
       </form>
     </div>

@@ -354,14 +354,6 @@ p.da {
 .App {
   padding-bottom: 14rem;
 }
-.chatcont form {
-  position: fixed;
-  bottom: 0%;
-  background: white;
-  padding-bottom: 35%;
-  z-index: 2;
-  padding-top: 3%;
-}
 
 nav.navbar {
   z-index: 5;
@@ -572,3 +564,7 @@ button.close-btn {
   top: -3%;
   right: -1%;
 }
+.ptt-status-bar.idle {
+  display: none;
+}
+

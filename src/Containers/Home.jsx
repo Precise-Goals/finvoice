@@ -10,7 +10,7 @@ const Home = () => {
         <p>FinVoice is an AI-powered finance assistant that offers voice-first expense logging, AI-driven summaries, cash flow forecasting, and goal planning</p>
         <button onClick={() => navigate("/logup")}>Get Started</button>
       </div>
-      <img src="man.webp" className="man" alt="MAN" />
+      <img src="/man.webp" className="man" alt="MAN" />
     </div>
   );
 };

@@ -13,6 +13,7 @@ import {
   signOut,
 } from "firebase/auth";
 import { UserContext, useUser } from "./UserContext";
+import { FinancialDataProvider } from "./context/FinancialDataContext";
 import LogUp from "./Containers/LogUp";
 import Navbar from "./Components/Navbar";
 import IntroAnimation from "./Components/IntroAnimation";
@@ -103,30 +104,32 @@ function App() {
         <div className="App">
           <div className="wrapper">
             <UserProvider>
-              <BrowserRouter>
-                <UsawerR />
-                <div className="divsa"></div>
+              <FinancialDataProvider>
+                <BrowserRouter>
+                  <UsawerR />
+                  <div className="divsa"></div>
 
-                <Navbar />
-                <Routes>
-                  {routeData.map((route, index) =>
-                    route.private ? (
-                      <Route
-                        key={index}
-                        path={route.route}
-                        element={<PrivateRoute element={<route.component />} />}
-                      />
-                    ) : (
-                      <Route
-                        key={index}
-                        path={route.route}
-                        element={<route.component />}
-                      />
-                    )
-                  )}
-                  <Route path="*" element={<Home />} />
-                </Routes>
-              </BrowserRouter>
+                  <Navbar />
+                  <Routes>
+                    {routeData.map((route, index) =>
+                      route.private ? (
+                        <Route
+                          key={index}
+                          path={route.route}
+                          element={<PrivateRoute element={<route.component />} />}
+                        />
+                      ) : (
+                        <Route
+                          key={index}
+                          path={route.route}
+                          element={<route.component />}
+                        />
+                      )
+                    )}
+                    <Route path="*" element={<Home />} />
+                  </Routes>
+                </BrowserRouter>
+              </FinancialDataProvider>
             </UserProvider>
           </div>
         </div>

@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:sarvam": "node scripts/test-sarvam.js"
+    "test:sarvam": "node scripts/test-sarvam.js",
+    "test:rag": "node scripts/test-rag.js"
   },
   "dependencies": {
     "firebase": "^12.1.0",

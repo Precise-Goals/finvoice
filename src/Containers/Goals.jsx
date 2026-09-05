@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { getDatabase, ref, push, onValue, remove } from "firebase/database";
-import { getAuth } from "firebase/auth";
-import { app } from "../firebase";
+import React, { useState } from "react";
+import { useFinancialData } from "../context/FinancialDataContext";
+import { formatINR } from "../services/ragService";
 
 const investmentTypes = [
   "Real Estate",
@@ -14,84 +13,48 @@ const investmentTypes = [
 const planTypes = ["Individual", "Joint"];
 
 const Goals = () => {
-  const [goals, setGoals] = useState([]);
-  const [totalBalance, setTotalBalance] = useState(0);
+  const { totalBalance, goals, addGoal, removeGoal } = useFinancialData();
+
   const [title, setTitle] = useState("");
   const [type, setType] = useState(investmentTypes[0]);
   const [plan, setPlan] = useState(planTypes[0]);
   const [required, setRequired] = useState("");
   const [showForm, setShowForm] = useState(false);
 
-  const auth = getAuth();
-  const user = auth.currentUser;
-
-  useEffect(() => {
-    if (!user) return;
-    const db = getDatabase(app);
-
-    // Fetch total balance from DB
-    const balanceRef = ref(db, `users/${user.uid}/totalBalance`);
-    onValue(balanceRef, (snapshot) => {
-      const balance = snapshot.val() || 0;
-      setTotalBalance(balance);
-    });
-
-    // Fetch goals and auto-remove achieved goals
-    const goalsRef = ref(db, `users/${user.uid}/goals`);
-    onValue(goalsRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const parsedGoals = Object.keys(data).map((key) => ({
-        id: key,
-        ...data[key],
-      }));
-
-      // Auto-remove goals that are achieved
-      parsedGoals.forEach((goal) => {
-        if (totalBalance >= goal.required) {
-          remove(ref(db, `users/${user.uid}/goals/${goal.id}`));
-        }
-      });
-
-      // Update state after removing achieved goals
-      setGoals(parsedGoals.filter((goal) => totalBalance < goal.required));
-    });
-  }, [user, totalBalance]);
-
-  const addGoal = () => {
-    if (!title || !required)
-      return alert("Please fill title and required amount");
-    const db = getDatabase(app);
-    const goalsRef = ref(db, `users/${user.uid}/goals`);
-    push(goalsRef, {
+  const handleAddGoal = async () => {
+    if (!title || !required) {
+      return alert("Please fill in the title and required amount.");
+    }
+    const success = await addGoal({
       title,
       type,
       plan,
       required: parseFloat(required),
     });
-    setTitle("");
-    setRequired("");
-    setType(investmentTypes[0]);
-    setPlan(planTypes[0]);
-    setShowForm(false);
-  };
-
-  const removeGoal = (id) => {
-    const db = getDatabase(app);
-    remove(ref(db, `users/${user.uid}/goals/${id}`));
+    if (success) {
+      setTitle("");
+      setRequired("");
+      setType(investmentTypes[0]);
+      setPlan(planTypes[0]);
+      setShowForm(false);
+    } else {
+      alert("Failed to save goal. Please check your connection.");
+    }
   };
 
   const count = goals.length;
 
   return (
-    <div className="Gotent">
+    <div className="Gotent" style={{ paddingBottom: "100px" }}>
       <div className="goero">
         <h1>
           You have {count} <span>Long term goals</span>
         </h1>
         <p>
           Long-term goals focus on empowering users to achieve financial
-          independence through automated and personalized planning
+          independence through automated and personalized planning.
         </p>
+
         <button className="open-form-btn" onClick={() => setShowForm(true)}>
           + Add Goal
         </button>
@@ -106,7 +69,7 @@ const Goals = () => {
             <h3>Add New Goal</h3>
             <input
               type="text"
-              placeholder="Goal Title"
+              placeholder="Goal Title (e.g. 50g Gold, House Downpayment)"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
@@ -126,41 +89,70 @@ const Goals = () => {
             </select>
             <input
               type="number"
-              placeholder="Required Amount"
+              placeholder="Target Required Amount (₹)"
               value={required}
               onChange={(e) => setRequired(e.target.value)}
             />
-            <button onClick={addGoal}>Add Goal</button>
+            <button onClick={handleAddGoal}>Save Goal</button>
           </div>
         </div>
       )}
 
       <div className="cards">
         {goals.map((goal) => {
-          const progress = Math.min((totalBalance / goal.required) * 100, 100);
+          const progress = Math.min(
+            100,
+            Math.round((totalBalance / goal.required) * 100)
+          );
+
           return (
             <div key={goal.id} className="goal-card">
               <button
                 className="remove-goal"
                 onClick={() => removeGoal(goal.id)}
+                title="Remove Goal"
               >
                 x
               </button>
+
               <h3>{goal.title}</h3>
+
               <div className="inv">
                 <p>{goal.type}</p>
                 •
                 <p>{goal.plan}</p>
               </div>
-              <div className="progress-bar">
+
+              <div className="progress-bar" style={{ width: "100%", margin: "8px 0" }}>
                 <div
                   className="progress"
-                  style={{ width: `${progress}%` }}
+                  style={{
+                    width: `${progress}%`,
+                    background:
+                      progress >= 100
+                        ? "#10b981"
+                        : "linear-gradient(90deg, #6366f1 0%, #4f46e5 100%)",
+                  }}
                 ></div>
               </div>
-              <p>
-                ₹ {totalBalance} / ₹ {goal.required}
-              </p>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  margin: "6px 0 12px",
+                }}
+              >
+                <span>
+                  Current: {formatINR(totalBalance)} / Target: {formatINR(goal.required)}
+                </span>
+                <span style={{ color: progress >= 100 ? "#10b981" : "#4f46e5" }}>
+                  {progress}% Funded
+                </span>
+              </div>
             </div>
           );
         })}

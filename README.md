@@ -8,7 +8,30 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
+```
+FinVoice is an AI-powered, voice-first personal finance management and advisory platform engineered to dismantle digital, linguistic, and financial literacy barriers across India. Conventional fintech applications rely heavily on manual numeric input, complex multi-screen navigation, and English-dominated interfaces, creating significant accessibility barriers for non-English speakers and users across rural and semi-urban communities.
 
+FinVoice addresses this gap by integrating Sarvam AI's Indic language foundation models specifically the Saaras v3 Speech-to-Text engine and the sarvam-105b-conversations Large Language Model with Firebase-powered real-time financial data infrastructure. Built with support for all 22+ scheduled Indian languages along with Indian English, FinVoice enables users to manage their finances through unconstrained, conversational voice interactions.
+
+The system can process noisy speech, handle regional accents and code-switching such as Hinglish and Tanglish, and automatically transform conversations into structured financial transactions. Beyond transaction management, FinVoice maintains a real-time financial profile containing account balances, transaction history, expenditure patterns, savings goals, and user preferences. A personalized Retrieval-Augmented Generation (RAG) layer retrieves relevant financial context from this live dashboard data and supplies it to the LLM before generating responses, enabling the assistant to provide context-aware recommendations rather than generic financial advice.
+
+Through this architecture, FinVoice can analyze spending behavior, explain cash-flow patterns, track financial milestones, and provide personalized guidance on budgeting, SIP investments, emergency funds, and debt management in the user's preferred Indian language and native script. This transforms the platform from a conventional expense tracker into a continuously contextualized financial companion designed for accessible and personalized financial decision-making.
+
+Unique Value Proposition
+1] 22+ Language Voice Recognition: Supports all 22 scheduled Indian languages and Indian English with automatic language identification, regional dialect resilience, and code-switching support.
+2] Zero-Click Transaction Extraction: Converts unconstrained spoken conversations into structured financial records by automatically identifying transaction type, category, amount, merchant, and description.
+3] Resilient Dual-Layer Parsing: Combines LLM-based financial entity extraction with multilingual offline regex and keyword fallbacks, improving transaction reliability during unstable connectivity.
+4] Personalized Financial RAG: Retrieves relevant user-specific data from real-time dashboard record including transactions, balances, spending patterns, savings goals, and preferences and provides this context to the LLM before generating responses.
+5] Context-Aware Financial Advisory: Uses retrieved financial context to deliver personalized recommendations for budgeting, SIPs, emergency funds, debt management, and spending decisions instead of relying solely on generic financial guidance.
+6] Dynamic Cash Flow Analytics: Continuously recalculates balances and category-wise expenditure and presents financial trends through interactive line and donut visualizations.
+7] Milestone-Based Goal Tracking: Connects goals such as Gold, Real Estate, Stocks, and Education with real-time financial balances and automatically tracks progress toward completion.
+8] Secure Indian KYC Integration: Uses Firebase Authentication and cloud synchronization with validation workflows for PAN and Aadhaar-based user profiles.
+
+
+Conclusion
+FinVoice bridges India’s linguistic and financial accessibility gap through voice-first AI.
+It combines multilingual speech recognition, intelligent transaction extraction, and real-time financial analytics. Its personalized RAG layer uses each user’s financial data to provide context-aware guidance. This enables more natural, accessible, and personalized financial decision-making for users across India.
+```
 ## 📖 Abstract
 
 **FinVoice** is an AI-powered, voice-first personal finance management and advisory web application engineered to dismantle digital, linguistic, and financial literacy barriers across India. Conventional fintech applications depend heavily on manual numeric input, complex navigation, and English-dominated user interfaces—excluding vast demographic segments across non-metro regions.

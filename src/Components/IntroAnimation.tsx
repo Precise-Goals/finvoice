@@ -87,7 +87,7 @@ const IntroAnimation: React.FC<IntroAnimationProps> = ({ onComplete }) => {
           <span key={i}>{letter}</span>
         ))}
       </div>
-      <img src="LOGO.png" alt="logo" />
+      <img src="/LOGO.png" alt="logo" />
       <div className="line h"></div>
       <div className="ripple"></div>
       {/* {[...Array(8)].map((_, i) => (

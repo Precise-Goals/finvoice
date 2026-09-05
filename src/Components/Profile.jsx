@@ -6,11 +6,12 @@ import {
   updateProfile,
 } from "firebase/auth";
 import { getDatabase, ref, get, update } from "firebase/database";
-import { PiSignOutBold } from "react-icons/pi";
+import { PiSignOutBold, PiPencilSimpleBold, PiSparkleBold } from "react-icons/pi";
 
 import { app } from "../firebase";
 import "./style.css";
 import { useNavigate } from "react-router-dom";
+import OnboardingModal from "./OnboardingModal";
 
 export const Profile = () => {
   const [user, setUser] = useState(null);
@@ -20,6 +21,7 @@ export const Profile = () => {
   const [success, setSuccess] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [aadhaarError, setAadhaarError] = useState("");
   const [panError, setPanError] = useState("");
 
@@ -176,7 +178,7 @@ export const Profile = () => {
       await update(ref(db, `users/${user.uid}`), updatedData);
       await updateProfile(user, {
         displayName: editData.name,
-        photoURL: `/public/${editData.avatar}.png`,
+        photoURL: `/${editData.avatar}.png`,
       });
 
       setUserDetails((prev) => ({ ...prev, ...updatedData }));
@@ -202,9 +204,22 @@ export const Profile = () => {
       <div className="profile-header">
         <h2>Profile</h2>
         <div className="header-actions">
+          <button
+            className="setup-wizard-btn"
+            onClick={() => setShowOnboarding(true)}
+            title="Launch Smooth Onboarding Wizard"
+          >
+            <PiSparkleBold size={15} />
+            <span>Setup Wizard</span>
+          </button>
           {!isEditing ? (
-            <button className="edit-btn" onClick={handleEditToggle}>
-              Edit Profile
+            <button
+              className="edit-icon-btn"
+              onClick={handleEditToggle}
+              title="Edit Profile"
+              aria-label="Edit Profile"
+            >
+              <PiPencilSimpleBold />
             </button>
           ) : (
             <div className="edit-actions">
@@ -228,7 +243,7 @@ export const Profile = () => {
       <div className="profile-content">
         <div className="profile-avatar">
           <img
-            src={`/public/${
+            src={`/${
               isEditing ? editData.avatar : userDetails?.avatar || 1
             }.png`}
             alt="User Avatar"
@@ -349,7 +364,7 @@ export const Profile = () => {
                   }
                 >
                   <img
-                    src={`/public/${num}.png`}
+                    src={`/${num}.png`}
                     alt={`Avatar ${num}`}
                     className="avatar-image"
                   />
@@ -364,6 +379,15 @@ export const Profile = () => {
             </button>
           </div>
         </div>
+      )}
+      {showOnboarding && (
+        <OnboardingModal
+          isOpen={showOnboarding}
+          onClose={() => {
+            setShowOnboarding(false);
+            if (user) fetchUserDetails(user.uid, user);
+          }}
+        />
       )}
     </div>
   );

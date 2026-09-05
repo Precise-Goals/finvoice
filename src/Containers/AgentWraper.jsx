@@ -1,45 +1,34 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MdKeyboardVoice, MdStop, MdCheckCircle, MdReceiptLong, MdPsychology } from "react-icons/md";
-import { getDatabase, ref, push, update } from "firebase/database";
-import { app } from "../firebase";
-import { useUser } from "../UserContext";
-import { transcribeAudio, chatCompletion, parseExpenseWithSarvam, checkSarvamHealth } from "../services/sarvam";
+import { MdKeyboardVoice, MdStop, MdCheckCircle, MdReceiptLong, MdPsychology, MdAutoAwesome } from "react-icons/md";
+import { transcribeAudio, parseExpenseWithSarvam, checkSarvamHealth } from "../services/sarvam";
+import { useFinancialData } from "../context/FinancialDataContext";
+import { askFinVoiceAssistant, formatINR } from "../services/ragService";
 import ReactMarkdown from "react-markdown";
 
-const LANGUAGES = [
-  { code: "unknown", name: "Auto-Detect (22+ Indic)", flag: "🌐" },
-  { code: "hi-IN", name: "Hindi (हिंदी)", flag: "🇮🇳" },
-  { code: "mr-IN", name: "Marathi (मराठी)", flag: "🇮🇳" },
-  { code: "en-IN", name: "English (India)", flag: "🇮🇳" },
-  { code: "bn-IN", name: "Bengali (বাংলা)", flag: "🇮🇳" },
-  { code: "te-IN", name: "Telugu (తెలుగు)", flag: "🇮🇳" },
-  { code: "ta-IN", name: "Tamil (தமிழ்)", flag: "🇮🇳" },
-  { code: "gu-IN", name: "Gujarati (ગુજરાતી)", flag: "🇮🇳" },
-  { code: "kn-IN", name: "Kannada (ಕನ್ನಡ)", flag: "🇮🇳" },
-  { code: "ml-IN", name: "Malayalam (മലയാളം)", flag: "🇮🇳" },
-  { code: "pa-IN", name: "Punjabi (ਪੰਜਾਬੀ)", flag: "🇮🇳" },
-  { code: "od-IN", name: "Odia (ଓଡ଼ିଆ)", flag: "🇮🇳" },
-];
-
 const AgentWraper = () => {
-  const { user } = useUser();
+  const financialData = useFinancialData();
+  const { totalBalance, userProfile, processTransaction } = financialData;
+
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("");
   const [parsedExpense, setParsedExpense] = useState(null);
-  const [selectedLang, setSelectedLang] = useState("unknown");
   const [detectedLang, setDetectedLang] = useState("");
   const [voiceLevel, setVoiceLevel] = useState(0);
   const [apiStatus, setApiStatus] = useState("checking");
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [micStatus, setMicStatus] = useState("idle"); // 'idle' | 'listening' | 'speaking' | 'pausing' | 'processing'
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animFrameRef = useRef(null);
+
+  const hasSpokenRef = useRef(false);
+  const isStoppingRef = useRef(false);
 
   // Check Sarvam AI Health on Mount
   useEffect(() => {
@@ -73,40 +62,44 @@ const AgentWraper = () => {
       if (expenseData && expenseData.amount > 0) {
         setParsedExpense(expenseData);
 
-        // Save to Firebase Realtime DB if user is authenticated
-        if (user) {
-          const db = getDatabase(app);
-          const timestamp = new Date().toISOString();
-          const newTxRef = push(ref(db, `users/${user.uid}/transactions`));
+        // Process transaction into state and Firebase
+        await processTransaction(
+          expenseData,
+          spokenText,
+          detectedLang || "en"
+        );
+        setSavedSuccess(true);
 
-          await update(newTxRef, {
-            amount: expenseData.amount,
-            category: expenseData.category || "others",
-            type: expenseData.type || "expense",
-            description: expenseData.description || spokenText,
-            timestamp,
-            date: new Date().toLocaleDateString("en-IN"),
-            source: "Sarvam AI Voice Agent",
-          });
-          setSavedSuccess(true);
-        }
+        const isPositive =
+          expenseData.type === "income" ||
+          expenseData.type === "savings" ||
+          expenseData.direction === "inflow";
+        const actionWord =
+          expenseData.type === "income"
+            ? "Credited"
+            : expenseData.type === "savings"
+            ? "Saved"
+            : "Logged";
+        const newEstimatedBalance =
+          totalBalance + (isPositive ? expenseData.amount : -expenseData.amount);
 
         setResponse(
-          `Logged **₹${expenseData.amount.toLocaleString("en-IN")}** under **${
-            expenseData.category || expenseData.type
-          }** successfully!`
+          `${actionWord} **₹${expenseData.amount.toLocaleString("en-IN")}** ${
+            expenseData.type === "income"
+              ? "as **Income**"
+              : `under **${expenseData.category || expenseData.type}**`
+          } successfully! Total balance is now **${formatINR(newEstimatedBalance)}**.`
         );
       } else {
-        // 2. Otherwise treat as a financial inquiry and ask Sarvam AI
-        const aiAnswer = await chatCompletion([
-          {
-            role: "system",
-            content:
-              "You are FinVoice's Voice Financial Advisor powered by Sarvam AI. Provide brief, actionable, and encouraging personal finance advice in 2-3 sentences. Support English, Hindi, and Marathi.",
-          },
-          { role: "user", content: spokenText },
-        ]);
-        setResponse(aiAnswer);
+        // 2. Otherwise treat as a financial inquiry and ask Sarvam AI with live RAG context
+        const ragResult = await askFinVoiceAssistant({
+          query: spokenText,
+          history: [],
+          financialData,
+          userProfile,
+          languageCode: "unknown",
+        });
+        setResponse(ragResult.reply);
       }
     } catch (err) {
       console.error("AI Analysis error:", err);
@@ -114,19 +107,79 @@ const AgentWraper = () => {
     } finally {
       setAnalyzing(false);
     }
-  }, [user]);
+  }, [financialData, userProfile, totalBalance, detectedLang, processTransaction]);  // Push-To-Talk (PTT) references & duration counter
+  const isHoldingRef = useRef(false);
+  const pressStartTimeRef = useRef(0);
+  const durationTimerRef = useRef(null);
+  const [recordDuration, setRecordDuration] = useState(0);
 
-  const startRecording = async () => {
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    isHoldingRef.current = false;
+    if (durationTimerRef.current) {
+      clearInterval(durationTimerRef.current);
+      durationTimerRef.current = null;
+    }
+
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.warn("MediaRecorder stop error:", e);
+      }
+    }
+    setRecording(false);
+
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setVoiceLevel(0);
+  }, []);
+
+  const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      isStoppingRef.current = false;
+      isHoldingRef.current = true;
+      pressStartTimeRef.current = Date.now();
+      setRecordDuration(0);
       audioChunksRef.current = [];
+      hasSpokenRef.current = false;
+      setMicStatus("listening");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // If user released pointer before getUserMedia resolved
+      if (!isHoldingRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
 
       try {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (AudioContextClass) {
           const audioCtx = new AudioContextClass();
           const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 64;
+          analyser.fftSize = 128;
+          analyser.smoothingTimeConstant = 0.3;
           const source = audioCtx.createMediaStreamSource(stream);
           source.connect(analyser);
 
@@ -134,15 +187,28 @@ const AgentWraper = () => {
           analyserRef.current = analyser;
 
           const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          const SPEECH_THRESHOLD = 8;
+
           const updateAudioLevel = () => {
-            if (analyserRef.current) {
-              analyserRef.current.getByteFrequencyData(dataArray);
-              const sum = dataArray.reduce((acc, v) => acc + v, 0);
-              setVoiceLevel(Math.min(100, Math.round((sum / dataArray.length / 128) * 100)));
-              animFrameRef.current = requestAnimationFrame(updateAudioLevel);
+            if (!analyserRef.current || isStoppingRef.current) return;
+
+            analyserRef.current.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
             }
+            const average = sum / dataArray.length;
+            const currentLevel = Math.min(100, Math.round((average / 128) * 100));
+            setVoiceLevel(currentLevel);
+
+            if (currentLevel >= SPEECH_THRESHOLD) {
+              hasSpokenRef.current = true;
+              setMicStatus("speaking");
+            }
+
+            animFrameRef.current = requestAnimationFrame(updateAudioLevel);
           };
-          updateAudioLevel();
+          animFrameRef.current = requestAnimationFrame(updateAudioLevel);
         }
       } catch (e) {
         console.warn("AudioContext visualizer skipped:", e);
@@ -158,51 +224,87 @@ const AgentWraper = () => {
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const durationMs = Date.now() - pressStartTimeRef.current;
 
-        if (audioBlob.size > 0) {
+        // Accidental tap protection
+        if (durationMs < 350) {
+          setTranscript("Hold the big mic to speak, release when finished!");
+          setRecording(false);
+          setMicStatus("idle");
+          return;
+        }
+
+        if (audioBlob.size > 500) {
           setTranscribing(true);
+          setMicStatus("processing");
           try {
             const sttResult = await transcribeAudio(audioBlob, {
-              languageCode: selectedLang,
+              languageCode: "unknown",
               model: "saaras:v3",
             });
 
-            if (sttResult.transcript) {
+            if (sttResult.transcript && sttResult.transcript.trim()) {
               setTranscript(sttResult.transcript);
-              setDetectedLang(sttResult.language_code || selectedLang);
+              setDetectedLang(sttResult.language_code || "Auto");
               await handleProcessText(sttResult.transcript);
             } else {
-              setTranscript("No clear speech detected. Please try again.");
+              setTranscript("No clear speech detected. Please hold and speak clearly.");
             }
           } catch (sttErr) {
             console.error("Sarvam STT failed:", sttErr);
             setTranscript(`Recognition error: ${sttErr.message}`);
           } finally {
             setTranscribing(false);
+            setMicStatus("idle");
           }
+        } else {
+          setTranscript("Audio too short. Please hold the mic and speak clearly.");
+          setMicStatus("idle");
         }
       };
 
       mediaRecorder.start();
       setRecording(true);
-      setTranscript("Listening... Speak an expense (e.g., 'Spent 500 on dinner') or financial question");
+      setTranscript("Listening... Keep holding and speak in any Indian language");
+
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      durationTimerRef.current = setInterval(() => {
+        setRecordDuration((prev) => +(prev + 0.1).toFixed(1));
+      }, 100);
     } catch (err) {
       console.error("Mic access error:", err);
       alert("Microphone permission is required to use Sarvam Voice Recognition.");
+      isHoldingRef.current = false;
       setRecording(false);
+      setMicStatus("idle");
     }
+  }, [handleProcessText]);
+
+  // Pointer event handlers for Push-To-Talk
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (err) {
+      console.debug("Pointer capture fallback:", err);
+    }
+    startRecording();
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
+  const handlePointerUp = (e) => {
+    e.preventDefault();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      console.debug("Pointer release fallback:", err);
     }
-    setRecording(false);
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current.close().catch(() => {});
-    }
-    setVoiceLevel(0);
+    stopRecording();
+  };
+
+  const handlePointerCancel = () => {
+    stopRecording();
   };
 
   return (
@@ -231,10 +333,10 @@ const AgentWraper = () => {
       >
         <div>
           <h2 style={{ margin: 0, fontSize: "1.6rem", fontWeight: 800 }}>
-            FinVoice Sarvam AI Agent
+            FinVoice Smart Voice Agent
           </h2>
           <p style={{ margin: "4px 0 0", color: "#9ca3af", fontSize: "13px" }}>
-            Real-time Indian language speech recognition (Saaras) & Financial Reasoning
+            Real-time multi-Indic speech recognition with Push-To-Talk
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -243,76 +345,30 @@ const AgentWraper = () => {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              backgroundColor:
-                apiStatus === "connected"
-                  ? "#10b981"
-                  : apiStatus === "error"
-                  ? "#ef4444"
-                  : "#f59e0b",
+              backgroundColor: apiStatus === "connected" ? "#10b981" : "#ef4444",
+              display: "inline-block",
             }}
           />
-          <span style={{ fontSize: "12px", color: "#d1d5db" }}>
-            {apiStatus === "connected"
-              ? "Sarvam AI Active"
-              : apiStatus === "error"
-              ? "Check API Key"
-              : "Connecting..."}
+          <span
+            style={{
+              fontSize: "12px",
+              color: apiStatus === "connected" ? "#10b981" : "#ef4444",
+              fontWeight: 600,
+            }}
+          >
+            {apiStatus === "connected" ? "Sarvam Saaras Connected" : "API Offline"}
           </span>
         </div>
       </div>
 
-      {/* Language Selector Bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "8px",
-          flexWrap: "wrap",
-          marginBottom: "24px",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: "13px", color: "#9ca3af", marginRight: "4px" }}>
-          Recognition Language:
-        </span>
-        {LANGUAGES.map((lang) => (
-          <button
-            key={lang.code}
-            onClick={() => setSelectedLang(lang.code)}
-            style={{
-              background:
-                selectedLang === lang.code
-                  ? "linear-gradient(135deg, #6366f1 0%, #4338ca 100%)"
-                  : "rgba(255,255,255,0.05)",
-              color: selectedLang === lang.code ? "#fff" : "#cbd5e1",
-              border:
-                selectedLang === lang.code
-                  ? "1px solid #818cf8"
-                  : "1px solid rgba(255,255,255,0.1)",
-              borderRadius: "20px",
-              padding: "6px 14px",
-              fontSize: "13px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              fontWeight: selectedLang === lang.code ? 600 : 400,
-              transition: "all 0.2s ease",
-            }}
-          >
-            <span>{lang.flag}</span>
-            <span>{lang.name}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Central Microphone Pulse Hub */}
+      {/* Central Smart Microphone Pulse Hub */}
       <div
         style={{
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          padding: "3rem 1rem",
+          padding: "2.5rem 1rem",
         }}
       >
         <div style={{ position: "relative" }}>
@@ -323,20 +379,39 @@ const AgentWraper = () => {
                 position: "absolute",
                 inset: `-${15 + voiceLevel * 0.4}px`,
                 borderRadius: "50%",
-                background: "radial-gradient(circle, rgba(239, 68, 68, 0.4) 0%, rgba(239, 68, 68, 0) 70%)",
+                background:
+                  micStatus === "speaking"
+                    ? "radial-gradient(circle, rgba(16, 185, 129, 0.5) 0%, rgba(16, 185, 129, 0) 70%)"
+                    : "radial-gradient(circle, rgba(239, 68, 68, 0.4) 0%, rgba(239, 68, 68, 0) 70%)",
                 animation: "pulse 1.2s infinite",
               }}
             />
           )}
 
           <button
-            onClick={recording ? stopRecording : startRecording}
+            onPointerDown={handlePointerDown}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
+            onKeyDown={(e) => {
+              if ((e.key === " " || e.key === "Enter") && !recording) {
+                e.preventDefault();
+                startRecording();
+              }
+            }}
+            onKeyUp={(e) => {
+              if (e.key === " " || e.key === "Enter") {
+                e.preventDefault();
+                stopRecording();
+              }
+            }}
             style={{
               width: "120px",
               height: "120px",
               borderRadius: "50%",
               background: recording
-                ? "linear-gradient(135deg, #ef4444 0%, #991b1b 100%)"
+                ? micStatus === "speaking"
+                  ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
+                  : "linear-gradient(135deg, #ef4444 0%, #991b1b 100%)"
                 : transcribing || analyzing
                 ? "linear-gradient(135deg, #f59e0b 0%, #b45309 100%)"
                 : "linear-gradient(135deg, #4f46e5 0%, #312e81 100%)",
@@ -347,12 +422,21 @@ const AgentWraper = () => {
               alignItems: "center",
               justifyContent: "center",
               cursor: "pointer",
+              userSelect: "none",
+              touchAction: "none",
+              WebkitUserSelect: "none",
               boxShadow: recording
-                ? "0 0 35px rgba(239, 68, 68, 0.7)"
+                ? micStatus === "speaking"
+                  ? "0 0 35px rgba(16, 185, 129, 0.8)"
+                  : "0 0 35px rgba(239, 68, 68, 0.7)"
                 : "0 10px 30px rgba(79, 70, 229, 0.5)",
-              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+              transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
             }}
-            title={recording ? "Click to Stop and Transcribe" : "Click to Speak"}
+            title={
+              recording
+                ? "Push to Talk: Recording... Release when finished speaking"
+                : "Push to Talk: Press & hold to speak, release to process"
+            }
           >
             {recording ? <MdStop /> : <MdKeyboardVoice />}
           </button>
@@ -362,17 +446,25 @@ const AgentWraper = () => {
           style={{
             marginTop: "20px",
             fontSize: "14px",
-            color: recording ? "#ef4444" : "#9ca3af",
+            color:
+              recording
+                ? micStatus === "speaking"
+                  ? "#10b981"
+                  : "#ef4444"
+                : transcribing || analyzing
+                ? "#f59e0b"
+                : "#9ca3af",
             fontWeight: 600,
+            textAlign: "center",
           }}
         >
           {recording
-            ? `Listening... (Level: ${voiceLevel}%) - Click to Finish`
+            ? `🔴 Recording (${recordDuration}s) • Keep holding and speak, release to process`
             : transcribing
-            ? "Transcribing audio with Sarvam Saaras..."
+            ? "⏳ Transcribing audio with Sarvam Saaras..."
             : analyzing
-            ? "Sarvam AI is analyzing..."
-            : "Tap the microphone to speak an expense or ask a financial question"}
+            ? "⚡ Sarvam AI RAG is analyzing your financials..."
+            : "🎙️ Push to Talk: Press & hold the big mic to speak, release to process"}
         </p>
       </div>
 
@@ -453,13 +545,13 @@ const AgentWraper = () => {
           </div>
           {savedSuccess && (
             <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#10b981", fontSize: "13px" }}>
-              <MdCheckCircle /> Saved to Database
+              <MdCheckCircle /> Saved & Synced with Dashboard
             </div>
           )}
         </div>
       )}
 
-      {/* Sarvam AI Response / Advice */}
+      {/* Sarvam AI Response / RAG Grounded Advice */}
       {response && (
         <div
           style={{
@@ -473,6 +565,18 @@ const AgentWraper = () => {
             <MdPsychology style={{ color: "#818cf8", fontSize: "1.2rem" }} />
             <span style={{ fontSize: "11px", fontWeight: 700, color: "#818cf8", textTransform: "uppercase" }}>
               Sarvam AI Financial Intelligence
+            </span>
+            <span
+              style={{
+                marginLeft: "auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "11px",
+                color: "#10b981",
+              }}
+            >
+              <MdAutoAwesome /> Verified Ground Truth
             </span>
           </div>
           <div style={{ fontSize: "15px", lineHeight: "1.6", color: "#f3f4f6" }}>
